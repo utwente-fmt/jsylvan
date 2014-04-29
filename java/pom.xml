@@ -1,0 +1,21 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>jsylvan</groupId>
+    <artifactId>jsylvan-java</artifactId>
+    <name>JSylvan Java code</name>
+    <packaging>jar</packaging>
+    <version>1</version>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>1.6</source>
+                    <target>1.6</target>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

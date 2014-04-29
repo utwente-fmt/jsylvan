@@ -1,0 +1,40 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>sylvan</groupId>
+    <artifactId>libsylvan</artifactId>
+    <version>1</version>
+    <packaging>so</packaging>
+
+    <build>
+        <finalName>${artifactId}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>native-maven-plugin</artifactId>
+                <extensions>true</extensions>
+                <configuration>
+                    <compilerStartOptions>
+                        <compilerStartOption>-fPIC -g -O2 -I${project.build.sourceDirectory}</compilerStartOption>
+                    </compilerStartOptions>
+
+                    <sources>
+                        <source>
+                            <directory>sylvan/src</directory>
+                            <includes><include>*.c</include></includes>
+                            <excludes><exclude>numa_tools.c</exclude></excludes>
+                        </source>
+                        <source>
+                            <directory>src</directory>
+                            <includes><include>*.c</include></includes>
+                        </source>
+                    </sources>
+
+                    <linkerStartOptions>
+                        <linkerStartOption>-shared -lpthread -lm</linkerStartOption>
+                    </linkerStartOptions>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

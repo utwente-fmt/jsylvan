@@ -1,0 +1,56 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>jsylvan</groupId>
+    <artifactId>JSylvan</artifactId>
+    <name>JSylvan</name>
+    <version>1</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>native</module>
+        <module>java</module>
+    </modules>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>2.4</version>
+                <configuration>
+                    <runOnlyAtExecutionRoot>true</runOnlyAtExecutionRoot>
+                    <appendAssemblyId>false</appendAssemblyId>
+                    <finalName>JSylvan</finalName>
+                    <descriptors>
+                        <descriptor>jar.xml</descriptor>
+                    </descriptors>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+     <dependencies>
+        <dependency>
+            <groupId>sylvan</groupId>
+            <artifactId>libsylvan</artifactId>
+            <version>1</version>
+            <scope>runtime</scope>
+            <type>so</type>
+        </dependency>
+        <dependency>
+            <groupId>jsylvan</groupId>
+            <artifactId>jsylvan-java</artifactId>
+            <version>1</version>
+            <scope>runtime</scope>
+            <type>jar</type>
+        </dependency>
+    </dependencies>
+
+</project>

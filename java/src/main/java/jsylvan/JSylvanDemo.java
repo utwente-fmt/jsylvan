@@ -1,0 +1,51 @@
+package jsylvan;
+
+import java.io.IOException;
+
+public class JSylvanDemo
+{
+    public static void main(String[] args)
+    {
+        // to use JSylvan, initialize it...
+        // 4 workers (for a 4 core machine, obviously set this to the number of cores)
+        // a work-stealing stack for each worker of 100000 entries (bit much, but that's fine)
+        // allocate a node table of 2^26 buckets (sorry, we did not implement resize)
+        // allocate a operations cache of 2^24 entries
+        JSylvan.initialize(4, 100000, 26, 24);
+
+        // All Lace/Sylvan memory is allocated using mmap.
+        // The work-stealing stack can be huge, since real memory is not allocated until actually used.
+        // Do not allocate a larger node table / operations cache than you can afford.
+        // Currently, 2^26 nodes is 2048 MB, 2^24 cache is 576 MB.
+        // On top of that, you will have the memory allocated by the JVM...
+
+        // We create BDDs that hold just "a" and "b" (i.e. x_1, x_2)
+        long a = JSylvan.ref(JSylvan.makeVar(1));
+        long b = JSylvan.ref(JSylvan.makeVar(2));
+
+        // Create a BDD representing a /\ b
+        long aAndB = JSylvan.ref(JSylvan.makeAnd(a, b));
+
+        // Create a BDD set of variables 1,2,3,4,5
+        long setOfVariables = JSylvan.ref(JSylvan.makeSet(new int[]{1,2,3,4,5}));
+
+        // Calculate the number of satisfying assignments, given domain of vars 1,2,3,4,5
+        // This is... 8! 11000, 11001, 11010, 11011, 11100, 11101, 11110, 11111.
+        double count = JSylvan.satcount(aAndB, setOfVariables);
+        System.out.println(String.format("Satcount: %f", count));
+
+        // Determine amount of nodes in A and b.
+        // Nodecount is NOT thread-safe for fairly obvious reasons.
+        // (The obvious reason being that nodes will be marked in the table, and if you do
+        //  this with multiple threads, the result will likely be wrong)
+        long numberOfNodes = JSylvan.nodecount(aAndB);
+        System.out.println(String.format("Nodes: %d", numberOfNodes));
+
+        // Calculate \exists a * a /\ b
+        // Obviously, the result should be "0 \/ b" = "b"
+        long result = JSylvan.ref(JSylvan.makeExists(aAndB, a));
+        if (result != b) System.out.println("Fail.");
+
+        // And that concludes our little demonstration. TODO: make proper test class...
+    }
+}
