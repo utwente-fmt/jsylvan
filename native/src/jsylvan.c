@@ -136,9 +136,9 @@ Java_jsylvan_JSylvan_initLace(JNIEnv *env, jclass cl, jlong threads, jlong stack
 }
 
 JNIEXPORT void JNICALL
-Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jint tablesize, jint cachesize)
+Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jint tablesize, jint cachesize, jint granularity)
 {
-    sylvan_init(tablesize, cachesize, 4);
+    sylvan_init(tablesize, cachesize, granularity);
 
     // the JSylvan java class has static vars one and zero
     jfieldID one_field = (*env)->GetStaticFieldID(env, cl, "one", "J");
@@ -218,4 +218,21 @@ Java_jsylvan_JSylvan_makeUnionPar(JNIEnv *env, jclass cl, jlongArray arr)
     (*env)->ReleaseLongArrayElements(env, arr, dest, 0);
 
     return result;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_disableGC(JNIEnv *env, jclass cl)
+{
+    sylvan_gc_disable();
+    return;
+    (void)env;
+    (void)cl;
+}
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_enableGC(JNIEnv *env, jclass cl)
+{
+    sylvan_gc_enable();
+    return;
+    (void)env;
+    (void)cl;
 }

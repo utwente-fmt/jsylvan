@@ -11,7 +11,11 @@ public class JSylvanDemo
         // a work-stealing stack for each worker of 100000 entries (bit much, but that's fine)
         // allocate a node table of 2^26 buckets (sorry, we did not implement resize)
         // allocate a operations cache of 2^24 entries
-        JSylvan.initialize(4, 100000, 26, 24);
+        // default granularity: cache every 4 levels. (1 = operations cache every level, 2 is 'only half the levels', etc)
+        JSylvan.initialize(4, 100000, 26, 24, 4);
+
+        JSylvan.disableGC();
+        JSylvan.enableGC();
 
         // All Lace/Sylvan memory is allocated using mmap.
         // The work-stealing stack can be huge, since real memory is not allocated until actually used.

@@ -15,14 +15,16 @@ public class JSylvan
     /**
      * Initialize: number of workers, size of the work-stealing stack (Lace)
      *             2^tablesize nodes and 2^cachesize cache entries
+     *             also: granularity (default: 4, sensible values: 1-10 or so) influences operations cache
+     *                   higher granularity = use operations cache less often
      */
-    public static void initialize(long workers, long stacksize, int tablesize, int cachesize)
+    public static void initialize(long workers, long stacksize, int tablesize, int cachesize, int granularity)
     {
         if (instance != null) throw new RuntimeException("JSylvan already initialized!");
         instance = new JSylvan();
 
         initLace(workers, stacksize);
-        initSylvan(tablesize, cachesize);
+        initSylvan(tablesize, cachesize, granularity);
     }
 
 
@@ -61,6 +63,9 @@ public class JSylvan
 
     public static native void printDot(long bdd);
     public static native void fprintDot(String filename, long bdd);
+
+    public static native void disableGC();
+    public static native void enableGC();
 
     /**
      * Calculate number of variable assignments for which the BDD evaluation yields true
@@ -117,7 +122,7 @@ public class JSylvan
     private static JSylvan instance = null;
 
     private static native void initLace(long workers, long stacksize);
-    private static native void initSylvan(int tablesize, int cachesize);
+    private static native void initSylvan(int tablesize, int cachesize, int granularity);
 
     static {
         try {
