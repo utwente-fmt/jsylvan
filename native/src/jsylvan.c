@@ -179,4 +179,43 @@ Java_jsylvan_JSylvan_fprintDot(JNIEnv *env, jclass cl, jstring filename, jlong b
     (*env)->ReleaseStringUTFChars(env, filename, path);
 }
 
+TASK_3(BDD, union_par, BDD*, arr, int, first, int, last)
+{
+    if (first == last) return arr[first];
 
+    BDD left, right;
+
+    int mid = (first+last)/2;
+    // check: last == first + 1
+    if (first == mid) { // we have 2
+        return CALL(sylvan_ite, arr[first], sylvan_true, arr[last], 0); // or
+    }
+
+    if (mid+1 == last) { // we have 3
+        left = sylvan_ref(CALL(sylvan_ite, arr[first], sylvan_true, arr[mid], 0)); // or
+        BDD result = CALL(sylvan_ite, left, sylvan_true, arr[last], 0);
+        sylvan_deref(left);
+        return result;
+    }
+
+    SPAWN(union_par, arr, first, mid);
+    right = sylvan_ref(CALL(union_par, arr, mid+1, last));
+    left = sylvan_ref(SYNC(union_par));
+    BDD result = CALL(sylvan_ite, left, sylvan_true, right, 0);
+    sylvan_deref(left);
+    sylvan_deref(right);
+    return result;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeUnionPar(JNIEnv *env, jclass cl, jlongArray arr)
+{
+    jsize len = (*env)->GetArrayLength(env, arr);
+    if (len == 0) return (jlong)sylvan_false;
+
+    jlong *dest = (*env)->GetLongArrayElements(env, arr, 0);
+    BDD result = CALL(union_par, (BDD*)dest, 0, len-1);
+    (*env)->ReleaseLongArrayElements(env, arr, dest, 0);
+
+    return result;
+}

@@ -44,7 +44,14 @@ public class JSylvanDemo
         // Calculate \exists a * a /\ b
         // Obviously, the result should be "0 \/ b" = "b"
         long result = JSylvan.ref(JSylvan.makeExists(aAndB, a));
-        if (result != b) System.out.println("Fail.");
+        if (result != b) System.out.println("Fail test 1.");
+
+        long c = JSylvan.ref(JSylvan.makeVar(3));
+        long d = JSylvan.ref(JSylvan.makeVar(4));
+        long e = JSylvan.ref(JSylvan.makeVar(5));
+
+        result = JSylvan.ref(JSylvan.makeUnionPar(new long[]{a, b, c, d, e}));
+        if (result != JSylvan.makeOr(JSylvan.makeOr(a, b),JSylvan.makeOr(c,JSylvan.makeOr(d,e)))) System.out.println("Fail test 2.");
 
         // And that concludes our little demonstration. TODO: make proper test class...
     }

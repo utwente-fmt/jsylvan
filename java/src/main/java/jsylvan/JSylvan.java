@@ -46,6 +46,7 @@ public class JSylvan
     public static native long makeNotEquals(long a, long b);
     public static native long makeExists(long a, long variables); // disjunction of variables
     public static native long makeNext(long a, long b, long variables);
+    public static native long makeUnionPar(long[] bdds); // create the union/disjunction of all bdds in array
 
     public static native long ref(long bdd); // returns same bdd
     public static native void deref(long bdd);
