@@ -56,9 +56,7 @@ struct vector_relation
     BDDVAR *prime_vec_to_bddvar;// Translation of bit to BDDVAR for X'
 
     // Generated based on vec_to_bddvar and vector_size
-    BDD variables;              // X
-    BDD prime_variables;        // X'
-    BDD all_variables;          // X U X'
+    BDD variables;
 };
 
 static vset_t
@@ -103,9 +101,9 @@ rel_load(FILE* f, vdom_t dom)
     assert(fread(rel->prime_vec_to_bddvar, sizeof(BDDVAR), rel->vector_size*dom->bits_per_integer, f) == rel->vector_size * dom->bits_per_integer);
 
     sylvan_gc_disable();
-    rel->variables = sylvan_ref(sylvan_set_fromarray(rel->vec_to_bddvar, dom->bits_per_integer * rel->vector_size));
-    rel->prime_variables = sylvan_ref(sylvan_set_fromarray(rel->prime_vec_to_bddvar, dom->bits_per_integer * rel->vector_size));
-    rel->all_variables = sylvan_ref(sylvan_set_addall(rel->prime_variables, rel->variables));
+    BDD x = sylvan_set_fromarray(rel->vec_to_bddvar, dom->bits_per_integer * rel->vector_size);
+    BDD x2 = sylvan_set_fromarray(rel->prime_vec_to_bddvar, dom->bits_per_integer * rel->vector_size);
+    rel->variables = sylvan_ref(sylvan_set_addall(x, x2));
     sylvan_gc_enable();
 
     return rel;
@@ -118,7 +116,7 @@ static vrel_t *next;
 TASK_4(BDD, go_par, BDD, set, BDD, all, size_t, from, size_t, len)
 {
     if (len == 1) {
-        BDD succ = sylvan_relprods(set, next[from]->bdd, next[from]->all_variables);
+        BDD succ = sylvan_relprod_paired(set, next[from]->bdd, next[from]->variables);
         sylvan_ref(succ);
         BDD result = sylvan_diff(succ, all);
         sylvan_deref(succ);
@@ -144,7 +142,12 @@ par(vset_t set)
     do {
         printf("Level %zu... ", counter++);
         if (report) {
-            printf("%zu states\n", (size_t)sylvan_satcount(states, set->variables));
+            sylvan_test_isbdd(states);
+            sylvan_test_isset(set->variables);
+            printf("satcount(");
+            sylvan_printsha(states);
+            printf(") = ");
+            printf("%zu states... ", (size_t)sylvan_satcount(states, set->variables));
         }
         BDD cur = new;
         new = sylvan_ref(CALL(go_par, cur, states, 0, nGrps));
@@ -187,7 +190,7 @@ bfs(vset_t set)
                 fflush(stdout);
             }*/
             // a = RelProdS(cur, next)
-            BDD a = sylvan_ref(sylvan_relprods(cur, next[i]->bdd, next[i]->all_variables));
+            BDD a = sylvan_ref(sylvan_relprod_paired(cur, next[i]->bdd, next[i]->variables));
             // b = a - states
             BDD b = sylvan_ref(sylvan_diff(a, states));
             // report
@@ -241,7 +244,10 @@ main(int argc, char **argv)
     // 30: 32GB
     // 31: 64GB
     // 32: 128GB
-    lace_init(4, 100000, 0); // 4 workers
+    lace_init(0, 1000000);
+    lace_startup(0, NULL, NULL);
+
+    // For bigger examples, set this to 31, 30. Or other higher values.
     sylvan_init(25, 24, 4); // 2GB memory
 
     // Create domain

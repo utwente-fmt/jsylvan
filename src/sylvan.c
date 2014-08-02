@@ -1,4 +1,18 @@
-#include <config.h>
+/*
+ * Copyright 2011-2014 Formal Methods and Tools, University of Twente
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <assert.h>
 #include <inttypes.h>
@@ -14,6 +28,7 @@
 #include <barrier.h>
 #include <lace.h>
 #include <llmsset.h>
+#include <sha2.h>
 #include <sylvan.h>
 #include <tls.h>
 
@@ -58,7 +73,7 @@ typedef struct bddnode* bddnode_t;
 /**
  * Macro's to convert BDD indices to nodes and vice versa
  */
-#define GETNODE(bdd) ((bddnode_t)llmsset_index_to_ptr(_bdd.data, BDD_STRIPMARK(bdd), sizeof(struct bddnode)))
+#define GETNODE(bdd) ((bddnode_t)llmsset_index_to_ptr(_bdd.data, BDD_STRIPMARK(bdd)))
 
 static barrier_t bar;
 
@@ -100,13 +115,13 @@ static DECLARE_THREAD_LOCAL(gc_key, gc_tomark_t);
  * Operation numbers are stored in the data field of the first parameter
  */
 #define CACHE_ITE 0
-#define CACHE_RELPRODS 1
-#define CACHE_RRELPRODS 2
+#define CACHE_RELPROD_PAIRED 1
+#define CACHE_RELPROD_PAIRED_PREV 2
 #define CACHE_COUNT 3
 #define CACHE_EXISTS 4
 #define CACHE_SATCOUNT 5
-#define CACHE_RELPROD 6
-#define CACHE_SUBST 7
+#define CACHE_COMPOSE 6
+#define CACHE_RESTRICT 7
 #define CACHE_CONSTRAIN 8
 
 struct __attribute__((packed)) bddcache {
@@ -118,6 +133,11 @@ typedef struct bddcache* bddcache_t;
 
 #define LLCI_KEYSIZE ((sizeof(struct bddcache) - sizeof(BDD)))
 #define LLCI_DATASIZE ((sizeof(struct bddcache)))
+
+#include <hash24.h>
+#define hash_mul(key,len) hash24_mul(key)
+#define rehash_mul(key,len,seed) rehash24_mul(key,seed)
+
 #include <llci.h>
 
 /** static _bdd struct */
@@ -161,81 +181,28 @@ initialize_insert_index()
 /**
  * External references (note: protected by a spinlock)
  */
-struct sylvan_ref_s
-{
-    BDD bdd;
-    size_t count;
-};
 
-AVL(refset, struct sylvan_ref_s)
-{
-    return left->bdd - right->bdd;
-}
-
-static avl_node_t *sylvan_refs = NULL;
-static volatile int sylvan_refs_spinlock = 0;
+#include <refs.h>
 
 BDD
 sylvan_ref(BDD a)
 {
-    if (sylvan_isnode(a)) {
-        while (!cas(&sylvan_refs_spinlock, 0, 1)) {
-            while (sylvan_refs_spinlock != 0) ;
-        }
-
-        struct sylvan_ref_s s, *ss;
-        s.bdd = BDD_STRIPMARK(a);
-        ss = refset_search(sylvan_refs, &s);
-        if (ss == NULL) {
-            s.count = 0;
-            ss = refset_put(&sylvan_refs, &s, 0);
-        }
-        ss->count++;
-
-        sylvan_refs_spinlock = 0;
-    }
-
+    if (a == sylvan_false || a == sylvan_true) return a;
+    refs_up(BDD_STRIPMARK(a));
     return a;
 }
 
 void
 sylvan_deref(BDD a)
 {
-    if (sylvan_isnode(a)) {
-        while (!cas(&sylvan_refs_spinlock, 0, 1)) {
-            while (sylvan_refs_spinlock != 0) ;
-        }
-
-        struct sylvan_ref_s s, *ss;
-        s.bdd = BDD_STRIPMARK(a);
-        ss = refset_search(sylvan_refs, &s);
-        assert (ss != NULL);
-        assert (ss->count > 0);
-        ss->count--;
-
-        sylvan_refs_spinlock = 0;
-    }
+    if (a == sylvan_false || a == sylvan_true) return;
+    refs_down(BDD_STRIPMARK(a));
 }
 
 size_t
 sylvan_count_refs()
 {
-    size_t result = 0;
-
-    while (!cas(&sylvan_refs_spinlock, 0, 1)) {
-        while (sylvan_refs_spinlock != 0) ;
-    }
-
-    struct sylvan_ref_s *ss;
-    avl_iter_t *iter = refset_iter(sylvan_refs);
-    while ((ss = refset_iter_next(iter))) {
-        result += ss->count;
-    }
-    refset_iter_free(iter);
-
-    sylvan_refs_spinlock = 0;
-
-    return result;
+    return refs_count();
 }
 
 // During garbage collection, after clear, mark stuff again
@@ -253,20 +220,19 @@ sylvan_pregc_mark_rec(BDD bdd)
 
 // Recursively mark all externally referenced BDDs
 static void
-sylvan_pregc_mark_refs()
+sylvan_pregc_mark_refs(int my_id, int workers)
 {
-    while (!cas(&sylvan_refs_spinlock, 0, 1)) {
-        while (sylvan_refs_spinlock != 0) ;
+    size_t per_worker = refs_size / workers;
+    if (per_worker < 8) per_worker = 8;
+    size_t first = per_worker * my_id;
+    if (first >= refs_size) return;
+    size_t end = per_worker * (my_id + 1);
+    if (end >= refs_size) end = refs_size;
+    size_t *it = refs_iter2(first, end);
+    while (it != NULL) {
+        BDD bdd = refs_next2(&it, end);
+        sylvan_pregc_mark_rec(bdd);
     }
-
-    struct sylvan_ref_s *ss;
-    avl_iter_t *iter = refset_iter(sylvan_refs);
-    while ((ss = refset_iter_next(iter))) {
-        if (ss->count > 0) sylvan_pregc_mark_rec(ss->bdd);
-    }
-    refset_iter_free(iter);
-
-    sylvan_refs_spinlock = 0;
 }
 
 /** init and quit functions */
@@ -281,11 +247,6 @@ sylvan_init(size_t tablesize, size_t cachesize, int _granularity)
 {
     if (initialized != 0) return;
     initialized = 1;
-
-    if (!lace_inited()) {
-        fprintf(stderr, "Lace has not been initialized!\n");
-        exit(1);
-    }
 
     lace_set_callback(sylvan_test_gc);
     _bdd.workers = lace_workers();
@@ -320,7 +281,9 @@ sylvan_init(size_t tablesize, size_t cachesize, int _granularity)
         exit(1);
     }
 
-    _bdd.data = llmsset_create(sizeof(struct bddnode), sizeof(struct bddnode), 1LL<<tablesize);
+    assert(sizeof(struct bddnode) == 16);
+    _bdd.data = llmsset_create(1LL<<tablesize);
+    llmsset_test_multi(_bdd.data, _bdd.workers);
 
     if (cachesize >= 64) {
         fprintf(stderr, "sylvan_init error: cachesize must be < 64!\n");
@@ -328,6 +291,8 @@ sylvan_init(size_t tablesize, size_t cachesize, int _granularity)
     }
 
     _bdd.cache = llci_create(1LL<<cachesize);
+
+    refs_create(1024);
 
     _bdd.gc = 0;
 }
@@ -342,7 +307,7 @@ sylvan_quit()
 
     llci_free(_bdd.cache);
     llmsset_free(_bdd.data);
-    refset_free(&sylvan_refs);
+    refs_free();
     barrier_destroy (&bar);
 }
 
@@ -361,11 +326,11 @@ typedef enum {
 #if SYLVAN_OPERATION_STATS
   C_ite,
   C_exists,
-  C_relprods,
-  C_relprods_reversed,
-  C_relprod,
-  C_substitute,
+  C_relprod_paired,
+  C_relprod_paired_prev,
   C_constrain,
+  C_restrict,
+  C_compose,
 #endif
   C_MAX
 } Counters;
@@ -464,17 +429,17 @@ sylvan_report_stats()
     printf("GC full table:       %" PRIu64 "\n", totals[C_gc_hashtable_full]);
 
 #if SYLVAN_OPERATION_STATS
-    printf(NC ULINE "Call counters (ITE, exists, relprods, reversed relprods, relprod, substitute, constrain)\n" NC LBLUE);
+    printf(NC ULINE "Call counters (ITE, exists, relprod_paired, relprod_paired_prev, constrain)\n" NC LBLUE);
     for (i=0;i<_bdd.workers;i++) {
-        printf("Worker %02d:           %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n", i,
+        printf("Worker %02d:           %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n", i,
             sylvan_stats[i].count[C_ite], sylvan_stats[i].count[C_exists], 
-            sylvan_stats[i].count[C_relprods], sylvan_stats[i].count[C_relprods_reversed],
-            sylvan_stats[i].count[C_relprod], sylvan_stats[i].count[C_substitute], sylvan_stats[i].count[C_constrain]);
+            sylvan_stats[i].count[C_relprod_paired], sylvan_stats[i].count[C_relprod_paired_prev],
+            sylvan_stats[i].count[C_constrain]);
     }
-    printf("Totals:              %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n",
+    printf("Totals:              %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n",
         totals[C_ite], totals[C_exists], 
-        totals[C_relprods], totals[C_relprods_reversed],
-        totals[C_relprod], totals[C_substitute], totals[C_constrain]);
+        totals[C_relprod_paired], totals[C_relprod_paired_prev],
+        totals[C_constrain]);
 #endif
 
     printf(LRED  "****************" NC " \n");
@@ -550,6 +515,8 @@ sylvan_gc_participate()
     barrier_wait (&bar);
 
     // GC phase 2: mark nodes
+    sylvan_pregc_mark_refs(my_id, (int)workers);
+
     LOCALIZE_THREAD_LOCAL(gc_key, gc_tomark_t);
     gc_tomark_t t = gc_key;
     while (t != NULL) {
@@ -598,7 +565,7 @@ void sylvan_gc_go()
     barrier_wait (&bar);
 
     // GC phase 2a: mark external refs
-    sylvan_pregc_mark_refs();
+    sylvan_pregc_mark_refs(my_id, (int)workers);
 
     // GC phase 2b: mark internal refs
     LOCALIZE_THREAD_LOCAL(gc_key, gc_tomark_t);
@@ -1062,61 +1029,108 @@ TASK_IMPL_3(BDD, sylvan_constrain, BDD, a, BDD, b, BDDVAR, prev_level)
     TOMARK_INIT
 
     BDD low=sylvan_invalid, high=sylvan_invalid;
-    if (rand_1()) {
-        // Since we already computed bHigh, we can see some trivial results
-        if (sylvan_isconst(bHigh)) {
-            if (bHigh == sylvan_true) high = aHigh;
-            else return CALL(sylvan_constrain, aLow, bLow, level);
-        } else {
-            SPAWN(sylvan_constrain, aHigh, bHigh, level);
-        }
-
-        // Since we already computed bLow, we can see some trivial results
-        if (sylvan_isconst(bLow)) {
-            if (bLow == sylvan_true) low = bLow;
-            else {
-                // okay, return aHigh @ bHigh and skip cache
-                if (bHigh != sylvan_true) high = SYNC(sylvan_constrain);
-                return high;
-            }
-        } else {
-            low = CALL(sylvan_constrain, aLow, bLow, level);
-            TOMARK_PUSH(low)
-        }
-
-        if (bHigh != sylvan_true) {
-            high = SYNC(sylvan_constrain);
-            TOMARK_PUSH(high)
-        }
+    if (bLow == sylvan_true) low = aLow;
+    else if (bLow == sylvan_false) return CALL(sylvan_constrain, aHigh, bHigh, level);
+    else SPAWN(sylvan_constrain, aLow, bLow, level);
+    if (bHigh == sylvan_true) high = bHigh;
+    else if (bHigh == sylvan_false) {
+        if (bLow != sylvan_true) low = SYNC(sylvan_constrain);
+        return low;
     } else {
-        // Since we already computed bHigh, we can see some trivial results
-        if (sylvan_isconst(bLow)) {
-            if (bLow == sylvan_true) low = aLow;
-            else return CALL(sylvan_constrain, aHigh, bHigh, level);
-        } else {
-            SPAWN(sylvan_constrain, aLow, bLow, level);
-        }
+        high = CALL(sylvan_constrain, aHigh, bHigh, level);
+        TOMARK_PUSH(high);
+    }
+    if (bLow != sylvan_true) {
+        low = SYNC(sylvan_constrain);
+        TOMARK_PUSH(low);
+    }
+    result = sylvan_makenode(level, low, high);
 
-        // Since we already computed bLow, we can see some trivial results
-        if (sylvan_isconst(bHigh)) {
-            if (bHigh == sylvan_true) high = bHigh;
-            else {
-                // okay, return aLow @ bLow and skip cache
-                if (bLow != sylvan_true) low = SYNC(sylvan_constrain);
-                return low;
-            }
-        } else {
-            high = CALL(sylvan_constrain, aHigh, bHigh, level);
-            TOMARK_PUSH(high)
-        }
+    TOMARK_EXIT
 
-        if (bLow != sylvan_true) {
-            low = SYNC(sylvan_constrain);
-            TOMARK_PUSH(low)
+    if (cachenow) {
+        template_cache_node.result = result;
+        int cache_res = llci_put_tag(_bdd.cache, &template_cache_node);
+        if (cache_res == 0) {
+            // It existed!
+            SV_CNT_CACHE(C_cache_exists);
+            // No need to ref
+        } else if (cache_res == 1) {
+            // Created new!
+            SV_CNT_CACHE(C_cache_new);
         }
     }
 
-    result = sylvan_makenode(level, low, high);
+    return result;
+}
+
+/**
+ * Calculate restrict a @ b
+ */
+TASK_IMPL_3(BDD, sylvan_restrict, BDD, a, BDD, b, BDDVAR, prev_level)
+{
+    /* Trivial cases */
+    if (b == sylvan_true) return a;
+    if (b == sylvan_false) return sylvan_false;
+    if (sylvan_isconst(a)) return a;
+    if (a == b) return sylvan_true;
+    if (a == sylvan_not(b)) return sylvan_false;
+
+    /* Perhaps execute garbage collection */
+    sylvan_gc_test();
+
+    /* Count operation */
+    SV_CNT_OP(C_restrict);
+
+    // a != constant and b != constant
+    bddnode_t na = GETNODE(a);
+    bddnode_t nb = GETNODE(b);
+
+    BDDVAR level = na->level < nb->level ? na->level : nb->level;
+
+    /* Consult cache */
+    int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != level / granularity;
+    struct bddcache template_cache_node;
+    if (cachenow) {
+        // TODO: get rid of complement on a for better cache see cudd
+        memset(&template_cache_node, 0, sizeof(struct bddcache));
+        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RESTRICT);
+        template_cache_node.params[1] = b;
+        template_cache_node.result = sylvan_invalid;
+
+        if (llci_get_tag(_bdd.cache, &template_cache_node)) {
+            BDD result = template_cache_node.result;
+            SV_CNT_CACHE(C_cache_reuse);
+            return result;
+        }
+    }
+
+    BDD result;
+    TOMARK_INIT
+
+    if (nb->level < na->level) {
+        BDD c = CALL(sylvan_ite, node_low(b,nb), sylvan_true, node_high(b,nb), 0);
+        TOMARK_PUSH(c);
+        result = CALL(sylvan_restrict, a, c, level);
+    } else {
+        BDD aLow=node_low(a,na),aHigh=node_high(a,na),bLow=b,bHigh=b;
+        if (na->level == nb->level) {
+            bLow = node_low(b,nb);
+            bHigh = node_high(b,nb);
+        }
+        if (bLow == sylvan_false) {
+            result = CALL(sylvan_restrict, aHigh, bHigh, level);
+        } else if (bHigh == sylvan_false) {
+            result = CALL(sylvan_restrict, aLow, bLow, level);
+        } else {
+            SPAWN(sylvan_restrict, aLow, bLow, level);
+            BDD high = CALL(sylvan_restrict, aHigh, bHigh, level);
+            TOMARK_PUSH(high);
+            BDD low = SYNC(sylvan_restrict);
+            TOMARK_PUSH(low);
+            result = sylvan_makenode(level, low, high);
+        }
+    }
 
     TOMARK_EXIT
 
@@ -1240,82 +1254,55 @@ TASK_IMPL_3(BDD, sylvan_exists, BDD, a, BDD, variables, BDDVAR, prev_level)
     return result;
 }
 
-/**
- * RelProd. Calculates \exists X (A/\B)
- * NOTE: only for variables in x that are even...
- */
-TASK_IMPL_4(BDD, sylvan_relprod, BDD, a, BDD, b, BDD, x, BDDVAR, prev_level)
+TASK_IMPL_4(BDD, sylvan_relprod_paired, BDD, a, BDD, b, BDDSET, vars, BDDVAR, prev_level)
 {
-    /*
-     * Normalization and trivial cases
-     */
-
-    // 1 and 1 => 1
+    /* Trivial cases */
     if (a == sylvan_true && b == sylvan_true) return sylvan_true;
-
-    // A and 0 => 0, 0 and B => 0
     if (a == sylvan_false || b == sylvan_false) return sylvan_false;
-
-    // A and A => A and 1
     if (a == b) b = sylvan_true;
+    else if (a == sylvan_not(b)) return sylvan_false;
 
-    // A and not A => 0;
-    else if (BDD_EQUALM(a, b)) return sylvan_false;
-
-    // A and B => B and A         (exchange when b < a)
-    // (Also does A and 1 => 1 and A)
-    if (BDD_STRIPMARK(a) > BDD_STRIPMARK(b)) {
-        register BDD _b = b;
-        b = a;
-        a = _b;
+    if (sylvan_set_isempty(vars)) {
+        assert(b == sylvan_true);
+        return a;
     }
 
+    /* Perhaps execute garbage collection */
     sylvan_gc_test();
 
-    SV_CNT_OP(C_relprod);
+    /* Count operation */
+    SV_CNT_OP(C_relprod_paired);
 
+    /* Determine top level */
     bddnode_t na = sylvan_isconst(a) ? 0 : GETNODE(a);
     bddnode_t nb = sylvan_isconst(b) ? 0 : GETNODE(b);
 
-    // Get lowest level and cofactors
     BDDVAR level;
-    BDD aLow=a, aHigh=a, bLow=b, bHigh=b;
-    if (na) {
-        if (nb && na->level > nb->level) {
-            level = nb->level;
-            bLow = node_low(b, nb);
-            bHigh = node_high(b, nb);
-        } else if (nb && na->level == nb->level) {
-            level = na->level;
-            aLow = node_low(a, na);
-            aHigh = node_high(a, na);
-            bLow = node_low(b, nb);
-            bHigh = node_high(b, nb);
-        } else {
-            level = na->level;
-            aLow = node_low(a, na);
-            aHigh = node_high(a, na);
+    if (na && nb) level = na->level < nb->level ? na->level : nb->level;
+    else if (na) level = na->level;
+    else level = nb->level;
+
+    /* Skip vars */
+    bddnode_t vars_node = GETNODE(vars);
+    while (vars_node->level < level) {
+        vars = node_low(vars, vars_node);
+        if (sylvan_set_isempty(vars)) {
+            assert(b == sylvan_true); // if no more vars in trans, should be done now
+            return a;
         }
-    } else {
-        level = nb->level;
-        bLow = node_low(b, nb);
-        bHigh = node_high(b, nb);
+        vars_node = GETNODE(vars);
     }
 
-    while (!sylvan_set_isempty(x) && sylvan_var(x) < level) {
-        // Skip variables before x
-        x = sylvan_set_next(x);
-    }
-
+    /* Consult cache */
     int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != level / granularity;
 
     struct bddcache template_cache_node;
     if (cachenow) {
         // Check cache
         memset(&template_cache_node, 0, sizeof(struct bddcache));
-        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RELPROD);
+        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RELPROD_PAIRED);
         template_cache_node.params[1] = b;
-        template_cache_node.params[2] = x;
+        template_cache_node.params[2] = vars;
         template_cache_node.result = sylvan_invalid;
 
         if (llci_get_tag(_bdd.cache, &template_cache_node)) {
@@ -1325,43 +1312,67 @@ TASK_IMPL_4(BDD, sylvan_relprod, BDD, a, BDD, b, BDD, x, BDDVAR, prev_level)
         }
     }
 
-    // Recursive computation
-    BDD low, high, result;
+    /* Determine cofactors */
+    BDD aLow=a, aHigh=a, bLow=b, bHigh=b;
+    if (na && na->level == level) {
+        aLow = node_low(a, na);
+        aHigh = node_high(a, na);
+    }
+    if (nb && nb->level == level) {
+        bLow = node_low(b, nb);
+        bHigh = node_high(b, nb);
+    }
+
+    /* Recursively calculate low and high */
+    BDD low=sylvan_invalid, high=sylvan_invalid, result;
 
     TOMARK_INIT
 
-    if (!sylvan_set_isempty(x) && sylvan_var(x) == level) {
-        // variable level in variables, perform abstraction
-        low = CALL(sylvan_relprod, aLow, bLow, sylvan_set_next(x), level);
-        if (low == sylvan_true) {
-            result = sylvan_true;
-        } else {
-            TOMARK_PUSH(low)
-            high = CALL(sylvan_relprod, aHigh, bHigh, sylvan_set_next(x), level);
-            if (high == sylvan_true) {
+    if (vars_node->level == level) {
+        vars = node_low(vars, vars_node);
+        if ((level & 1) == 0) {
+            // quantify
+            low = CALL(sylvan_relprod_paired, aLow, bLow, vars, level);
+            if (low == sylvan_true) {
                 result = sylvan_true;
             }
-            else if (low == sylvan_false && high == sylvan_false) {
-                result = sylvan_false;
-            }
             else {
-                TOMARK_PUSH(high)
-                result = CALL(sylvan_ite, low, sylvan_true, high, 0); // or
+                TOMARK_PUSH(low)
+                high = CALL(sylvan_relprod_paired, aHigh, bHigh, vars, level);
+                if (high == sylvan_true) { result = sylvan_true; }
+                else if (low == sylvan_false && high == sylvan_false) { result = sylvan_false; }
+                else {
+                    TOMARK_PUSH(high)
+                    result = CALL(sylvan_ite, low, sylvan_true, high, 0);
+                }
             }
+        } else {
+            // substitute
+            if (aLow == sylvan_true && bLow == sylvan_true) low = sylvan_true;
+            else if (aLow == sylvan_false || bLow == sylvan_false) low = sylvan_false;
+            else if (aLow == bLow) low = sylvan_true;
+            else if (BDD_EQUALM(aLow, bLow)) low = sylvan_false;
+            else { SPAWN(sylvan_relprod_paired, aLow, bLow, vars, level); }
+            high = CALL(sylvan_relprod_paired, aHigh, bHigh, vars, level);
+            TOMARK_PUSH(high)
+            if (low == sylvan_invalid) {
+                low = SYNC(sylvan_relprod_paired);
+                TOMARK_PUSH(low)
+            }
+            result = sylvan_makenode(level-1, low, high);
         }
     } else {
-        if (rand_1()) {
-            SPAWN(sylvan_relprod, aLow, bLow, x, level);
-            high = CALL(sylvan_relprod, aHigh, bHigh, x, level);
-            TOMARK_PUSH(high)
-            low = SYNC(sylvan_relprod);
+        // no quantify or substitute, just "and"
+        if (aLow == sylvan_true && bLow == sylvan_true) low = sylvan_true;
+        else if (aLow == sylvan_false || bLow == sylvan_false) low = sylvan_false;
+        else if (aLow == bLow) low = sylvan_true;
+        else if (BDD_EQUALM(aLow, bLow)) low = sylvan_false;
+        else { SPAWN(sylvan_relprod_paired, aLow, bLow, vars, level); }
+        high = CALL(sylvan_relprod_paired, aHigh, bHigh, vars, level);
+        TOMARK_PUSH(high)
+        if (low == sylvan_invalid) {
+            low = SYNC(sylvan_relprod_paired);
             TOMARK_PUSH(low)
-        } else {
-            SPAWN(sylvan_relprod, aHigh, bHigh, x, level);
-            low = CALL(sylvan_relprod, aLow, bLow, x, level);
-            TOMARK_PUSH(low)
-            high = SYNC(sylvan_relprod);
-            TOMARK_PUSH(high)
         }
         result = sylvan_makenode(level, low, high);
     }
@@ -1383,193 +1394,50 @@ TASK_IMPL_4(BDD, sylvan_relprod, BDD, a, BDD, b, BDD, x, BDDVAR, prev_level)
     return result;
 }
 
-/**
- * Specialized substitute, substitutes variables 'x' \in vars by 'x-1'
- */
-TASK_IMPL_3(BDD, sylvan_substitute, BDD, a, BDD, vars, BDDVAR, prev_level)
-{
-    // Trivial cases
-    if (sylvan_isconst(a)) return a;
-
-    SV_CNT_OP(C_substitute);
-
-    sylvan_gc_test();
-
-    bddnode_t na = GETNODE(a);
-    BDDVAR level = na->level;
-
-    BDD aLow = node_low(a, na);
-    BDD aHigh = node_high(a, na);
-
-    while (!sylvan_set_isempty(vars) && sylvan_var(vars) < level) {
-        // Skip variables before x
-        vars = sylvan_set_next(vars);
-    }
-
-    if (sylvan_set_isempty(vars)) return a;
-
-    int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != level / granularity;
-
-    struct bddcache template_cache_node;
-    if (cachenow) {
-        // Check cache
-        memset(&template_cache_node, 0, sizeof(struct bddcache));
-        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_SUBST);
-        template_cache_node.params[1] = vars;
-        template_cache_node.params[2] = 0;
-        template_cache_node.result = sylvan_invalid;
-
-        if (llci_get_tag(_bdd.cache, &template_cache_node)) {
-            BDD result = template_cache_node.result;
-            SV_CNT_CACHE(C_cache_reuse);
-            return result;
-        }
-    }
-
-    TOMARK_INIT
-
-    // Recursive computation
-    BDD low, high;
-    if (rand_1()) {
-        SPAWN(sylvan_substitute, aLow, vars, level);
-        high = CALL(sylvan_substitute, aHigh, vars, level);
-        TOMARK_PUSH(high)
-        low = SYNC(sylvan_substitute);
-        TOMARK_PUSH(low)
-    } else {
-        SPAWN(sylvan_substitute, aHigh, vars, level);
-        low = CALL(sylvan_substitute, aLow, vars, level);
-        TOMARK_PUSH(low)
-        high = SYNC(sylvan_substitute);
-        TOMARK_PUSH(high)
-    }
-
-    BDD result;
-
-    if (!sylvan_set_isempty(vars) && sylvan_var(vars) == level) {
-        result = sylvan_makenode(level-1, low, high);
-    } else {
-        if (low == aLow && high == aHigh) result = a;
-        else result = sylvan_makenode(level, low, high);
-    }
-
-    TOMARK_EXIT
-
-    if (cachenow) {
-        template_cache_node.result = result;
-        int cache_res = llci_put_tag(_bdd.cache, &template_cache_node);
-        if (cache_res == 0) {
-            // It existed!
-            SV_CNT_CACHE(C_cache_exists);
-        } else if (cache_res == 1) {
-            // Created new!
-            SV_CNT_CACHE(C_cache_new);
-        }
-    }
-
-    return result;
-}
-
-int
-sylvan_relprods_analyse(BDD a, BDD b, void_cb cb_in, void_cb cb_out)
-{
-    if (a == sylvan_true && b == sylvan_true) return 0;
-    if (a == sylvan_false || b == sylvan_false) return 0;
-    if (a == b) b = sylvan_true;
-    else if (BDD_EQUALM(a, b)) return 0;
-
-    bddnode_t na = sylvan_isconst(a) ? 0 : GETNODE(a);
-    bddnode_t nb = sylvan_isconst(b) ? 0 : GETNODE(b);
-
-    BDD aLow=a, aHigh=a, bLow=b, bHigh=b;
-    if (na) {
-        if (nb && na->level > nb->level) {
-            bLow = node_low(b, nb);
-            bHigh = node_high(b, nb);
-        } else if (nb && na->level == nb->level) {
-            aLow = node_low(a, na);
-            aHigh = node_high(a, na);
-            bLow = node_low(b, nb);
-            bHigh = node_high(b, nb);
-        } else {
-            aLow = node_low(a, na);
-            aHigh = node_high(a, na);
-        }
-    } else {
-        bLow = node_low(b, nb);
-        bHigh = node_high(b, nb);
-    }
-
-    cb_in();
-    int d1 = sylvan_relprods_analyse(aLow, bLow, cb_in, cb_out);
-    int d2 = sylvan_relprods_analyse(aHigh, bHigh, cb_in, cb_out);
-    cb_out();
-
-    return d1>d2?d1+1:d2+1;
-}
-
-/**
- * Very specialized RelProdS. Calculates ( \exists X (A /\ B) ) [X'/X]
- * Assumptions on variables:
- * - 'vars' is the union of set of variables in X and X'
- * - A is defined on variables not in X'
- * - variables in X are even (0, 2, 4)
- * - variables in X' are odd (1, 3, 5)
- * - the substitution X/X' substitutes 0 by 1, 2 by 3, etc.
- */
-
-TASK_IMPL_4(BDD, sylvan_relprods, BDD, a, BDD, b, BDD, vars, BDDVAR, prev_level)
+TASK_IMPL_4(BDD, sylvan_relprod_paired_prev, BDD, a, BDD, b, BDD, vars, BDDVAR, prev_level)
 {
     /* Trivial cases */
     if (a == sylvan_true && b == sylvan_true) return sylvan_true;
     if (a == sylvan_false || b == sylvan_false) return sylvan_false;
-    if (a == b) b = sylvan_true;
-    else if (a == sylvan_not(b)) return sylvan_false;
 
+    if (sylvan_set_isempty(vars)) {
+        assert(b == sylvan_true);
+        return a;
+    }    
 
     /* Perhaps execute garbage collection */
     sylvan_gc_test();
 
-    /* Rewrite to improve cache utilisation */
-    if (a > b || b == sylvan_true) {
-        BDD _b = b;
-        b = a;
-        a = _b;
-    }
-
     /* Count operation */
-    SV_CNT_OP(C_relprods);
+    SV_CNT_OP(C_relprod_paired_prev);
 
     /* Determine top level */
     bddnode_t na = sylvan_isconst(a) ? 0 : GETNODE(a);
-    bddnode_t nb = GETNODE(b);
+    bddnode_t nb = sylvan_isconst(b) ? 0 : GETNODE(b);
 
-    BDDVAR level = nb->level;
-    if (na && na->level < level) level = na->level;
+    BDDVAR level;
+    if (na && nb) level = na->level < nb->level ? na->level : nb->level;
+    else if (na) level = na->level;
+    else level = nb->level;
 
-    // Determine if level \in vars
-    int in_vars = vars == sylvan_true;
-    if (!in_vars) while (!sylvan_set_isempty(vars)) {
-        BDD it_var = sylvan_set_var(vars);
-        if (it_var < level) {
-            vars = sylvan_set_next(vars);
-            continue;
+    /* Skip vars */
+    bddnode_t vars_node = GETNODE(vars);
+    while (vars_node->level < level) {
+        vars = node_low(vars, vars_node);
+        if (sylvan_set_isempty(vars)) {
+            assert(b == sylvan_true); // if no more vars in trans, should be done now
+            return a;
         }
-        if (it_var == level) {
-            vars = sylvan_set_next(vars);
-            in_vars = 1;
-        }
-        break;
+        vars_node = GETNODE(vars);
     }
 
     /* Consult cache */
     int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != level / granularity;
-
     struct bddcache template_cache_node;
     if (cachenow) {
         // Check cache
         memset(&template_cache_node, 0, sizeof(struct bddcache));
-        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RELPRODS);
+        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RELPROD_PAIRED_PREV);
         template_cache_node.params[1] = b;
         template_cache_node.params[2] = vars;
         template_cache_node.result = sylvan_invalid;
@@ -1582,235 +1450,83 @@ TASK_IMPL_4(BDD, sylvan_relprods, BDD, a, BDD, b, BDD, vars, BDDVAR, prev_level)
     }
 
     /* Determine cofactors */
-    BDD aLow=a, aHigh=a, bLow=b, bHigh=b;
+    BDD aLow = a, aHigh = a;
+    BDD bLow = b, bHigh = b;
     if (na && na->level == level) {
         aLow = node_low(a, na);
         aHigh = node_high(a, na);
     }
-    if (nb->level == level) {
+    if (nb && nb->level == level) {
         bLow = node_low(b, nb);
         bHigh = node_high(b, nb);
     }
 
-    /* Recursively calculate low and high */
     BDD low=sylvan_invalid, high=sylvan_invalid, result;
-
-    // Save old internal reference stack top
     TOMARK_INIT
 
-    if (in_vars && 0==(level&1)) {
-        // variable in X: quantify
-        low = CALL(sylvan_relprods, aLow, bLow, vars, level);
-        if (low == sylvan_true) {
-            result = sylvan_true;
-        }
-        else {
-            TOMARK_PUSH(low)
-            high = CALL(sylvan_relprods, aHigh, bHigh, vars, level);
-            if (high == sylvan_true) {
-                result = sylvan_true;
-            }
-            else if (low == sylvan_false && high == sylvan_false) {
-                result = sylvan_false;
-            }
-            else {
-                TOMARK_PUSH(high)
+    /* Determine cases */
+    if (level != vars_node->level) {
+        // not in transition relation
+        SPAWN(sylvan_relprod_paired_prev, aLow, bLow, vars, level);
+        high = CALL(sylvan_relprod_paired_prev, aHigh, bHigh, vars, level);
+        TOMARK_PUSH(high);
+        low = SYNC(sylvan_relprod_paired_prev);
+        TOMARK_PUSH(low);
+        result = sylvan_makenode(level, low, high);
+    } else if ((level & 1) == 1) {
+        // in transition relation, but primed variable!
+        // i.e. a does not match, but b does
+        vars = node_low(vars, vars_node);
+        SPAWN(sylvan_relprod_paired_prev, aLow, bLow, vars, level);
+        high = CALL(sylvan_relprod_paired_prev, aHigh, bHigh, vars, level);
+        TOMARK_PUSH(high);
+        low = SYNC(sylvan_relprod_paired_prev);
+        TOMARK_PUSH(low);
+        result = CALL(sylvan_ite, low, sylvan_true, high, 0);
+    } else {
+        // in transition relation, and a or b is normal variable
+        if (nb) {
+            if (nb->level == level) {
+                // consume nb, then run same level to match a and b
+                SPAWN(sylvan_relprod_paired_prev, a, bLow, vars, level);
+                high = CALL(sylvan_relprod_paired_prev, a, bHigh, vars, level);
+                TOMARK_PUSH(high);
+                low = SYNC(sylvan_relprod_paired_prev);
+                TOMARK_PUSH(low);
+                result = sylvan_makenode(level, low, high);
+            } else if (nb->level == level+1) {
+                // match a and b
+                // transition from 'any' to 'both'...
+                // return 'quantify' // OR
+                vars = node_low(vars, vars_node);
+                bLow = node_low(b, nb);
+                bHigh = node_high(b, nb);
+                SPAWN(sylvan_relprod_paired_prev, aLow, bLow, vars, level);
+                high = CALL(sylvan_relprod_paired_prev, aHigh, bHigh, vars, level);
+                TOMARK_PUSH(high);
+                low = SYNC(sylvan_relprod_paired_prev);
+                TOMARK_PUSH(low);
                 result = CALL(sylvan_ite, low, sylvan_true, high, 0);
-            }
-        }
-    }
-    else {
-        if (rand_1()) {
-            int spawned = 0;
-            // Get rid of trivial cases
-            if (aLow == sylvan_true && bLow == sylvan_true) low = sylvan_true;
-            else if (aLow == sylvan_false || bLow == sylvan_false) low = sylvan_false;
-            else if (aLow == bLow) low = sylvan_true;
-            else if (BDD_EQUALM(aLow, bLow)) low = sylvan_false;
-            else {
-                SPAWN(sylvan_relprods, aLow, bLow, vars, level);
-                spawned = 1;
-            }
-            high = CALL(sylvan_relprods, aHigh, bHigh, vars, level);
-            TOMARK_PUSH(high)
-            if (spawned) {
-                low = SYNC(sylvan_relprods);
-                TOMARK_PUSH(low)
-            }
-        } else {
-            int spawned = 0;
-            // Get rid of trivial cases
-            if (aHigh == sylvan_true && bHigh == sylvan_true) high = sylvan_true;
-            else if (aHigh == sylvan_false || bHigh == sylvan_false) high = sylvan_false;
-            else if (aHigh == bHigh) high = sylvan_true;
-            else if (BDD_EQUALM(aHigh, bHigh)) high = sylvan_false;
-            else {
-                SPAWN(sylvan_relprods, aHigh, bHigh, vars, level);
-                spawned = 1;
-            }
-            low = CALL(sylvan_relprods, aLow, bLow, vars, level);
-            TOMARK_PUSH(low)
-            if (spawned) {
-                high = SYNC(sylvan_relprods);
-                TOMARK_PUSH(high)
-            }
-        }
-
-        // variable in X': substitute
-        if (in_vars) result = sylvan_makenode(level-1, low, high);
-
-        // variable not in X or X': normal behavior
-        else result = sylvan_makenode(level, low, high);
-    }
-
-    // Drop references added after TOMARK_INIT
-    TOMARK_EXIT
-
-    if (cachenow) {
-        template_cache_node.result = result;
-        int cache_res = llci_put_tag(_bdd.cache, &template_cache_node);
-        if (cache_res == 0) {
-            // It existed!
-            SV_CNT_CACHE(C_cache_exists);
-        } else if (cache_res == 1) {
-            // Created new!
-            SV_CNT_CACHE(C_cache_new);
-        }
-    }
-
-    return result;
-}
-
-/**
- * Very specialized reversed RelProdS. Calculates \exists X' (A[X/X'] /\ B)
- * Assumptions:
- * - 'vars' is the union of set of variables in X and X'
- * - A is defined on variables not in X'
- * - variables in X are even (0, 2, 4)
- * - variables in X' are odd (1, 3, 5)
- * - the substitution X/X' substitutes 0 by 1, 2 by 3, etc.
- */
-TASK_IMPL_4(BDD, sylvan_relprods_reversed, BDD, a, BDD, b, BDD, vars, BDDVAR, prev_level)
-{
-    /*
-     * Normalization and trivial cases
-     */
-
-    if (a == sylvan_true && b == sylvan_true) return sylvan_true;
-    if (a == sylvan_false || b == sylvan_false) return sylvan_false;
-
-    /*
-     * END of Normalization and trivial cases
-     */
-
-    sylvan_gc_test();
-
-    SV_CNT_OP(C_relprods_reversed);
-
-    bddnode_t na = sylvan_isconst(a) ? 0 : GETNODE(a);
-    bddnode_t nb = sylvan_isconst(b) ? 0 : GETNODE(b);
-
-    BDDVAR x_a=-1, x_b=-1, S_x_a=-1, x=0xFFFF;
-    if (na) {
-        x_a = na->level;
-        S_x_a = x_a;
-        x = x_a;
-    }
-    if (nb) {
-        x_b = nb->level;
-        if (x > x_b) x = x_b;
-    }
-
-    // x = Top(x_a, x_b)
-
-    register int in_vars = vars == sylvan_true ? 1 : ({
-        register BDDVAR it_var;
-        while (!sylvan_set_isempty(vars) && (it_var=(GETNODE(vars)->level)) < x) {
-            vars = sylvan_set_next(vars);
-        }
-        vars == sylvan_false ? 0 : it_var == x;
-    });
-
-    if (in_vars) {
-        S_x_a = x_a + 1;
-        if (x_b != x) x += 1;
-    }
-
-    // x = Top(S_x_a, x_b)
-
-    // OK , so now S_x_a = S(x_a) properly, and
-    // if S_x_a == x then x_a == S'(x)
-
-    // Get cofactors
-    BDD aLow = a, aHigh = a;
-    BDD bLow = b, bHigh = b;
-    if (na && x == S_x_a) {
-        aLow = node_low(a, na);
-        aHigh = node_high(a, na);
-    }
-
-    if (nb && x == x_b) {
-        bLow = node_low(b, nb);
-        bHigh = node_high(b, nb);
-    }
-
-    int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != x / granularity;
-
-    struct bddcache template_cache_node;
-    if (cachenow) {
-        // Check cache
-        memset(&template_cache_node, 0, sizeof(struct bddcache));
-        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_RRELPRODS);
-        template_cache_node.params[1] = b;
-        template_cache_node.params[2] = vars;
-        template_cache_node.result = sylvan_invalid;
-
-        if (llci_get_tag(_bdd.cache, &template_cache_node)) {
-            BDD result = template_cache_node.result;
-            SV_CNT_CACHE(C_cache_reuse);
-            return result;
-        }
-    }
-
-    BDD low, high, result;
-
-    TOMARK_INIT
-
-    // if x \in X'
-    if ((x&1) == 1 && in_vars) {
-        low = CALL(sylvan_relprods_reversed, aLow, bLow, vars, x);
-        // variable in X': quantify
-        if (low == sylvan_true) {
-            result = sylvan_true;
-        } else {
-            TOMARK_PUSH(low)
-            high = CALL(sylvan_relprods_reversed, aHigh, bHigh, vars, x);
-            if (high == sylvan_true) {
-                result = sylvan_true;
-            } else if (low == sylvan_false && high == sylvan_false) {
-                result = sylvan_false;
             } else {
-                TOMARK_PUSH(high)
+                // match for a but not for b
+                vars = node_low(vars, vars_node);
+                SPAWN(sylvan_relprod_paired_prev, aLow, bLow, vars, level);
+                high = CALL(sylvan_relprod_paired_prev, aHigh, bHigh, vars, level);
+                TOMARK_PUSH(high);
+                low = SYNC(sylvan_relprod_paired_prev);
+                TOMARK_PUSH(low);
                 result = CALL(sylvan_ite, low, sylvan_true, high, 0);
             }
-        }
-    }
-    // if x \in X OR if excluded (works in either case)
-    else {
-        if (rand_1()) {
-            SPAWN(sylvan_relprods_reversed, aLow, bLow, vars, x);
-            high = CALL(sylvan_relprods_reversed, aHigh, bHigh, vars, x);
-            TOMARK_PUSH(high)
-            low = SYNC(sylvan_relprods_reversed);
-            TOMARK_PUSH(low)
         } else {
-            SPAWN(sylvan_relprods_reversed, aHigh, bHigh, vars, x);
-            low = CALL(sylvan_relprods_reversed, aLow, bLow, vars, x);
-            TOMARK_PUSH(low)
-            high = SYNC(sylvan_relprods_reversed);
-            TOMARK_PUSH(high)
+            // match for a but not for b
+            vars = node_low(vars, vars_node);
+            SPAWN(sylvan_relprod_paired_prev, aLow, bLow, vars, level);
+            high = CALL(sylvan_relprod_paired_prev, aHigh, bHigh, vars, level);
+            TOMARK_PUSH(high);
+            low = SYNC(sylvan_relprod_paired_prev);
+            TOMARK_PUSH(low);
+            result = CALL(sylvan_ite, low, sylvan_true, high, 0);
         }
-        result = sylvan_makenode(x, low, high);
     }
 
     TOMARK_EXIT
@@ -1830,6 +1546,82 @@ TASK_IMPL_4(BDD, sylvan_relprods_reversed, BDD, a, BDD, b, BDD, vars, BDDVAR, pr
 
     return result;
 }
+
+/**
+ * Function composition
+ */
+TASK_IMPL_3(BDD, sylvan_compose, BDD, a, BDDMAP, map, BDDVAR, prev_level)
+{
+    /* Trivial cases */
+    if (a == sylvan_false || a == sylvan_true) return a;
+    if (sylvan_map_isempty(map)) return a;
+
+    /* Perhaps execute garbage collection */
+    sylvan_gc_test();
+
+    /* Count operation */
+    SV_CNT_OP(C_compose);
+
+    /* Determine top level */
+    bddnode_t n = GETNODE(a);
+    BDDVAR level = n->level;
+
+    /* Skip map */
+    bddnode_t map_node = GETNODE(map);
+    while (map_node->level < level) {
+        map = node_low(map, map_node);
+        if (sylvan_map_isempty(map)) return a;
+        map_node = GETNODE(map);
+    }
+
+    /* Consult cache */
+    int cachenow = granularity < 2 || prev_level == 0 ? 1 : prev_level / granularity != level / granularity;
+    struct bddcache template_cache_node;
+    if (cachenow) {
+        // Check cache
+        memset(&template_cache_node, 0, sizeof(struct bddcache));
+        template_cache_node.params[0] = BDD_SETDATA(a, CACHE_COMPOSE);
+        template_cache_node.params[1] = map;
+        template_cache_node.result = sylvan_invalid;
+
+        if (llci_get_tag(_bdd.cache, &template_cache_node)) {
+            BDD result = template_cache_node.result;
+            SV_CNT_CACHE(C_cache_reuse);
+            return result;
+        }
+    }
+
+    TOMARK_INIT
+
+    /* Recursively calculate low and high */
+    SPAWN(sylvan_compose, node_low(a, n), map, level);
+    BDD high = CALL(sylvan_compose, node_high(a, n), map, level);
+    TOMARK_PUSH(high)
+    BDD low = SYNC(sylvan_compose);
+    TOMARK_PUSH(low)
+
+    /* Calculate result */
+    BDD root = map_node->level == level ? node_high(map, map_node) : sylvan_ithvar(level);
+    TOMARK_PUSH(root)
+    BDD result = CALL(sylvan_ite, root, high, low, 0);
+
+    TOMARK_EXIT
+
+    if (cachenow) {
+        template_cache_node.result = result;
+        int cache_res = llci_put_tag(_bdd.cache, &template_cache_node);
+        if (cache_res == 0) {
+            // It existed!
+            SV_CNT_CACHE(C_cache_exists);
+        } else if (cache_res == 1) {
+            // Created new!
+            SV_CNT_CACHE(C_cache_new);
+        }
+    }
+
+    return result;
+}
+
 
 /**
  * Count number of nodes for each level
@@ -1994,12 +1786,24 @@ TASK_IMPL_2(long double, sylvan_satcount, BDD, bdd, BDD, variables)
     size_t skipped = 0;
     BDDVAR var = sylvan_var(bdd);
     bddnode_t set_node = GETNODE(variables);
-    while (var != set_node->level) {
+    BDDVAR var_var = set_node->level;
+    while (var != var_var) {
+        if (var < var_var) {
+            fprintf(stderr, "sylvan_satcount: var %d is not in variables!\n", var);
+            assert(0);
+        }
         skipped++;
         variables = node_low(variables, set_node);
-        // if this assertion fails, then variables is not the support of <bdd>
-        assert(!sylvan_set_isempty(variables));
+        if (sylvan_set_isempty(variables)) {
+            fprintf(stderr, "sylvan_satcount: var %d is not in variables!\n", var);
+            assert(0);
+        }
         set_node = GETNODE(variables);
+        if (var_var >= set_node->level) {
+            fprintf(stderr, "sylvan_satcount: bad order in variables! (%d >= %d)\n", var_var, set_node->level);
+            assert(0);
+        }
+        var_var = set_node->level;
     }
 
     /* Count operation */
@@ -2187,6 +1991,162 @@ sylvan_set_fromarray(BDDVAR* arr, size_t length)
     BDDSET sub = sylvan_set_fromarray(arr+1, length-1);
     TOMARK_PUSH(sub)
     BDDSET result = sylvan_set_add(sub, *arr);
+    TOMARK_EXIT
+    return result;
+}
+
+void
+sylvan_test_isset(BDDSET set)
+{
+    while (set != sylvan_false) {
+        assert(set != sylvan_true);
+        bddnode_t n = GETNODE(set);
+        assert(node_high(set, n) == sylvan_true);
+        set = node_low(set, n);
+    }
+}
+
+/**
+ * IMPLEMENTATION OF BDDMAP
+ */
+
+BDDMAP
+sylvan_map_add(BDDMAP map, BDDVAR key, BDD value)
+{
+    if (sylvan_map_isempty(map)) return sylvan_makenode(key, sylvan_map_empty(), value);
+
+    bddnode_t n = GETNODE(map);
+    BDDVAR key_m = n->level;
+
+    if (key_m < key) {
+        // add recursively and rebuild tree
+        TOMARK_INIT
+        BDDMAP low = sylvan_map_add(node_low(map, n), key, value);
+        TOMARK_PUSH(low)
+        BDDMAP result = sylvan_makenode(key_m, low, node_high(map, n));
+        TOMARK_EXIT
+        return result;
+    } else if (key_m > key) {
+        return sylvan_makenode(key, map, value);
+    } else {
+        // replace old
+        return sylvan_makenode(key, node_low(map, n), value);
+    }
+}
+
+BDDMAP
+sylvan_map_addall(BDDMAP map_1, BDDMAP map_2)
+{
+    // one of the maps is empty
+    if (sylvan_map_isempty(map_1)) return map_2;
+    if (sylvan_map_isempty(map_2)) return map_1;
+
+    bddnode_t n_1 = GETNODE(map_1);
+    BDDVAR key_1 = n_1->level;
+
+    bddnode_t n_2 = GETNODE(map_2);
+    BDDVAR key_2 = n_2->level;
+
+    TOMARK_INIT
+    BDDMAP result;
+    if (key_1 < key_2) {
+        // key_1, recurse on n_1->low, map_2
+        BDDMAP low = sylvan_map_addall(node_low(map_1, n_1), map_2);
+        TOMARK_PUSH(low)
+        result = sylvan_makenode(key_1, low, node_high(map_1, n_1));
+    } else if (key_1 > key_2) {
+        // key_2, recurse on map_1, n_2->low
+        BDDMAP low = sylvan_map_addall(map_1, node_low(map_2, n_2));
+        TOMARK_PUSH(low)
+        result = sylvan_makenode(key_2, low, node_high(map_2, n_2));
+    } else {
+        // equal: key_2, recurse on n_1->low, n_2->low
+        BDDMAP low = sylvan_map_addall(node_low(map_1, n_1), node_low(map_2, n_2));
+        TOMARK_PUSH(low)
+        result = sylvan_makenode(key_2, low, node_high(map_2, n_2));
+    }
+    TOMARK_EXIT
+    return result;
+}
+
+BDDMAP
+sylvan_map_remove(BDDMAP map, BDDVAR key)
+{
+    if (sylvan_map_isempty(map)) return map;
+
+    bddnode_t n = GETNODE(map);
+    BDDVAR key_m = n->level;
+
+    if (key_m < key) {
+        TOMARK_INIT
+        BDDMAP low = sylvan_map_remove(node_low(map, n), key);
+        TOMARK_PUSH(low)
+        BDDMAP result = sylvan_makenode(key_m, low, node_high(map, n));
+        TOMARK_EXIT
+        return result;
+    } else if (key_m > key) {
+        return map;
+    } else {
+        return node_low(map, n);
+    }
+}
+
+BDDMAP
+sylvan_map_removeall(BDDMAP map, BDDMAP toremove)
+{
+    if (sylvan_map_isempty(map)) return map;
+    if (sylvan_map_isempty(toremove)) return map;
+
+    bddnode_t n_1 = GETNODE(map);
+    BDDVAR key_1 = n_1->level;
+
+    bddnode_t n_2 = GETNODE(toremove);
+    BDDVAR key_2 = n_2->level;
+
+    if (key_1 < key_2) {
+        TOMARK_INIT
+        BDDMAP low = sylvan_map_removeall(node_low(map, n_1), toremove);
+        TOMARK_PUSH(low)
+        BDDMAP result = sylvan_makenode(key_1, low, node_high(map, n_1));
+        TOMARK_EXIT
+        return result;
+    } else if (key_1 > key_2) {
+        return sylvan_map_removeall(map, node_low(toremove, n_2));
+    } else {
+        return sylvan_map_removeall(node_low(map, n_1), node_low(toremove, n_2));
+    }
+}
+
+int
+sylvan_map_in(BDDMAP map, BDDVAR key)
+{
+    while (!sylvan_map_isempty(map)) {
+        bddnode_t n = GETNODE(map);
+        if (n->level == key) return 1;
+        if (n->level > key) return 0; // BDDs are ordered
+        map = node_low(map, n);
+    }
+
+    return 0;
+}
+
+size_t
+sylvan_map_count(BDDMAP map)
+{
+    size_t r=0;
+    while (!sylvan_map_isempty(map)) { r++; map=sylvan_map_next(map); }
+    return r;
+}
+
+BDDMAP
+sylvan_set_to_map(BDDSET set, BDD value)
+{
+    if (sylvan_set_isempty(set)) return sylvan_map_empty();
+    TOMARK_INIT
+    bddnode_t set_n = GETNODE(set);
+    BDD sub = sylvan_set_to_map(node_low(set, set_n), value); 
+    TOMARK_PUSH(sub)
+    BDD result = sylvan_makenode(sub, set_n->level, value);
     TOMARK_EXIT
     return result;
 }
@@ -2629,3 +2589,69 @@ sylvan_serialize_fromfile(FILE *in)
         sylvan_ser_reversed_insert(&sylvan_ser_reversed_set, &s);
     }
 }
+
+static void
+sylvan_sha2_rec(BDD bdd, SHA256_CTX *ctx)
+{
+    if (bdd == sylvan_true || bdd == sylvan_false) {
+        SHA256_Update(ctx, (void*)&bdd, sizeof(BDD));
+        return;
+    }
+
+    bddnode_t node = GETNODE(bdd);
+    if (sylvan_mark(node, 1)) {
+        uint32_t level = node->level;
+        if (node->comp) level |= 0x80000000;
+        SHA256_Update(ctx, (void*)&level, sizeof(uint32_t));
+        sylvan_sha2_rec(node->high, ctx);
+        sylvan_sha2_rec(node->low, ctx);
+    }
+}
+
+void
+sylvan_printsha(BDD bdd)
+{
+    sylvan_fprintsha(stdout, bdd);
+}
+
+void
+sylvan_fprintsha(FILE *f, BDD bdd)
+{
+    char buf[80];
+    sylvan_getsha(bdd, buf);
+    fprintf(f, "%s", buf);
+}
+
+void
+sylvan_getsha(BDD bdd, char *target)
+{
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    sylvan_sha2_rec(bdd, &ctx);
+    if (bdd != sylvan_true && bdd != sylvan_false) sylvan_unmark_rec(GETNODE(bdd), 1);
+    SHA256_End(&ctx, target);
+}
+
+static void
+sylvan_test_isbdd_rec(BDD bdd, BDDVAR parent)
+{
+    if (bdd == sylvan_true) return;
+    if (bdd == sylvan_false) return;
+    assert(llmsset_is_marked(_bdd.data, BDD_STRIPMARK(bdd)));
+    bddnode_t n = GETNODE(bdd);
+    assert(parent < n->level);
+    sylvan_test_isbdd_rec(node_low(bdd, n), n->level);
+    sylvan_test_isbdd_rec(node_high(bdd, n), n->level);
+}
+
+void
+sylvan_test_isbdd(BDD bdd)
+{
+    if (bdd == sylvan_true) return;
+    if (bdd == sylvan_false) return;
+    assert(llmsset_is_marked(_bdd.data, BDD_STRIPMARK(bdd)));
+    bddnode_t n = GETNODE(bdd);
+    sylvan_test_isbdd_rec(node_low(bdd, n), n->level);
+    sylvan_test_isbdd_rec(node_high(bdd, n), n->level);
+}
+
