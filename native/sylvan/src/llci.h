@@ -1,4 +1,18 @@
-#include <config.h>
+/*
+ * Copyright 2011-2014 Formal Methods and Tools, University of Twente
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <stdlib.h>
 #include <stdio.h>  // for printf
@@ -8,7 +22,6 @@
 #include <sys/mman.h> // for mmap
 
 #include <atomics.h>
-#include <murmur.h>
 
 #if USE_NUMA
 #include <numa_tools.h>
@@ -308,6 +321,7 @@ llci_clear_multi(const llci_t dbs, size_t my_id, size_t n_workers)
         // Note that llci_clear_partial will fix count if overflow...
         llci_clear_partial(dbs, first_line * LLCI_HASH_PER_CL, count * LLCI_HASH_PER_CL);
     }
+    (void)n_workers;
 #else
     size_t cachelines_total = (dbs->cache_size  + LLCI_HASH_PER_CL - 1) / LLCI_HASH_PER_CL;
     size_t cachelines_each  = (cachelines_total + n_workers        - 1) / n_workers;

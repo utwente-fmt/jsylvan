@@ -14,6 +14,10 @@
 #include "llmsset.h"
 #include "sylvan.h"
 
+#if USE_NUMA
+#include "numa_tools.h"
+#endif
+
 #define BLACK "\33[22;30m"
 #define GRAY "\33[01;30m"
 #define RED "\33[22;31m"
@@ -34,128 +38,30 @@
 #define BLINK "\33[5m"
 #define INVERT "\33[7m"
 
-int test_llmsset()
+__thread uint64_t seed = 1;
+
+uint64_t
+xorshift_rand(void)
 {
-    uint32_t entry[] = { 90570123,  43201432,   31007798,  256346587,
-                         543578998, 34534278,   86764826,  572667984,
-                         883562435, 2546247838, 190200937, 918456256,
-                         245892765, 29926542,   862864346, 624500973 };
-
-    uint64_t index[16];
-    uint64_t insert_index = 0;
-    int created;
-    unsigned int i;
-
-    llmsset_t set = llmsset_create(sizeof(uint32_t), sizeof(uint32_t), 1<<5); // size: 32
-
-    // Add all entries, but do not ref
-    for (i=0;i<16;i++) {
-        assert(llmsset_lookup(set, entry + i, &insert_index, &created, index + i) != 0);
-        assert(created);
-    }
-
-    assert(llmsset_get_filled(set)==16);
-
-    // Clear table
-    llmsset_clear(set);
-
-    // Check if table empty
-    assert(llmsset_get_filled(set)==0);
-
-    // Check if table really empty
-    for (i=0;i<set->table_size;i++) {
-        assert(set->table[i] == 0);
-    }
-
-    // Cleanup
-    llmsset_free(set);
-
-    return 1;
+    uint64_t x = seed;
+    if (seed == 0) seed = rand();
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    seed = x;
+    return x * 2685821657736338717LL;
 }
-
-llmsset_t msset;
-
-void *llmsset_test_worker(void* arg)
-{
-    #define N_TEST_LL_MS 1000
-    uint64_t stored[N_TEST_LL_MS];
-
-    uint64_t insert_index = (long)arg;
-
-    int loop;
-    for(loop=0; loop<8; loop++) {
-        printf("%d,", loop);
-        fflush(stdout);
-        uint32_t value, val2;
-        for (value=(size_t)arg;value<50000;value++) {
-            // Insert a large bunch of values near "value"
-            uint32_t k;
-            for (k=0; k<N_TEST_LL_MS; k++) {
-                val2 = value + k;
-                assert(llmsset_lookup(msset, &val2, &insert_index, NULL, &stored[k]));
-                assert(val2 == *(uint32_t*)llmsset_index_to_ptr(msset, stored[k], sizeof(uint32_t)));
-            }
-
-            // Multiple times, perform lookup again
-            int j;
-            for (j=0; j<5; j++) {
-                for (k=0; k<N_TEST_LL_MS; k++) {
-                    uint64_t index;
-                    val2 = value + k;
-                    assert(llmsset_lookup(msset, &val2, &insert_index, NULL, &index));
-
-                    if (index != stored[k]) {
-                        fprintf(stderr, "Difference! Index %"PRIu64" (%d) vs index %"PRIu64" (%d), expecting %d!\n", index, *(uint32_t*)llmsset_index_to_ptr(msset, index, sizeof(uint32_t)), stored[k], *(uint32_t*)llmsset_index_to_ptr(msset, stored[k], sizeof(uint32_t)), val2);
-                    }
-
-                    assert(index == stored[k]);
-                    assert(val2 == *(uint32_t*)llmsset_index_to_ptr(msset, index, sizeof(uint32_t)));
-                }
-            }
-        }
-    }
-
-    return NULL;
-}
-
-int test_llmsset2()
-{
-    msset = llmsset_create(sizeof(uint32_t), sizeof(uint32_t), 1<<20);
-
-    pthread_t t[4];
-    pthread_create(&t[0], NULL, &llmsset_test_worker, (void*)12);
-    pthread_create(&t[1], NULL, &llmsset_test_worker, (void*)89);
-    pthread_create(&t[2], NULL, &llmsset_test_worker, (void*)1055);
-    pthread_create(&t[3], NULL, &llmsset_test_worker, (void*)5035);
-    pthread_join(t[0], NULL);
-    pthread_join(t[1], NULL);
-    pthread_join(t[2], NULL);
-    pthread_join(t[3], NULL);
-
-    uint64_t i;
-    for (i=0;i<msset->table_size;i++) {
-        uint64_t key = msset->table[i];
-        if (key != 0) {
-            printf("Key=%"PRIx64"\n", key);
-        }
-    }
-
-    llmsset_free(msset);
-
-    return 1;
-}
-
 
 double
-uniform_deviate(int seed)
+uniform_deviate(uint64_t seed)
 {
-    return seed * (1.0 / (RAND_MAX + 1.0));
+    return seed * (1.0 / (0xffffffffffffffffL + 1.0));
 }
 
 int
 rng(int low, int high)
 {
-    return low + uniform_deviate(rand()) * (high-low);
+    return low + uniform_deviate(xorshift_rand()) * (high-low);
 }
 
 static inline BDD
@@ -349,26 +255,148 @@ test_operators()
     sylvan_gc_enable();
 }
 
+static void
+test_relprod()
+{
+    sylvan_gc_disable();
+
+    BDDVAR vars[] = {0,2,4};
+    BDDVAR all_vars[] = {0,1,2,3,4,5};
+
+    BDDSET all_vars_set = sylvan_set_fromarray(all_vars, 6);
+
+    BDD s, t, next, prev;
+    BDD zeroes, ones;
+
+    // transition relation: 000 --> 111 and !000 --> 000
+    t = sylvan_false;
+    t = sylvan_or(t, sylvan_cube(all_vars, 6, (char[]){0,1,0,1,0,1}));
+    t = sylvan_or(t, sylvan_cube(all_vars, 6, (char[]){1,0,2,0,2,0}));
+    t = sylvan_or(t, sylvan_cube(all_vars, 6, (char[]){2,0,1,0,2,0}));
+    t = sylvan_or(t, sylvan_cube(all_vars, 6, (char[]){2,0,2,0,1,0}));
+
+    s = sylvan_cube(vars, 3, (char[]){0,0,1});
+    zeroes = sylvan_cube(vars, 3, (char[]){0,0,0});
+    ones = sylvan_cube(vars, 3, (char[]){1,1,1});
+
+    next = sylvan_relprod_paired(s, t, all_vars_set);
+    prev = sylvan_relprod_paired_prev(next, t, all_vars_set);
+    assert(next == zeroes);
+    assert(prev == sylvan_not(zeroes));
+
+    next = sylvan_relprod_paired(next, t, all_vars_set);
+    prev = sylvan_relprod_paired_prev(next, t, all_vars_set);
+    assert(next == ones);
+    assert(prev == zeroes);
+
+    t = sylvan_cube(all_vars, 6, (char[]){0,0,0,0,0,1});
+    assert(sylvan_relprod_paired_prev(s, t, all_vars_set) == zeroes);
+    assert(sylvan_relprod_paired_prev(sylvan_not(s), t, all_vars_set) == sylvan_false);
+    assert(sylvan_relprod_paired(s, t, all_vars_set) == sylvan_false);
+    assert(sylvan_relprod_paired(zeroes, t, all_vars_set) == s);
+
+    t = sylvan_cube(all_vars, 6, (char[]){0,0,0,0,0,2});
+    assert(sylvan_relprod_paired_prev(s, t, all_vars_set) == zeroes);
+    assert(sylvan_relprod_paired_prev(zeroes, t, all_vars_set) == zeroes);
+    assert(sylvan_relprod_paired(sylvan_not(zeroes), t, all_vars_set) == sylvan_false);
+
+    sylvan_gc_enable();
+}
+
+static void
+test_compose()
+{
+    sylvan_gc_disable();
+
+    BDD a = sylvan_ithvar(1);
+    BDD b = sylvan_ithvar(2);
+
+    BDD a_or_b = sylvan_or(a, b);
+
+    BDD one = make_random(3, 16);
+    BDD two = make_random(8, 24);
+
+    BDDMAP map = sylvan_map_empty();
+
+    map = sylvan_map_add(map, 1, one);
+    map = sylvan_map_add(map, 2, two);
+
+    assert(sylvan_map_key(map) == 1);
+    assert(sylvan_map_value(map) == one);
+    assert(sylvan_map_key(sylvan_map_next(map)) == 2);
+    assert(sylvan_map_value(sylvan_map_next(map)) == two);
+
+    assert(testEqual(one, sylvan_compose(a, map)));
+    assert(testEqual(two, sylvan_compose(b, map)));
+
+    assert(testEqual(sylvan_or(one, two), sylvan_compose(a_or_b, map)));
+
+    map = sylvan_map_add(map, 2, one);
+    assert(testEqual(sylvan_compose(a_or_b, map), one));
+
+    map = sylvan_map_add(map, 1, two);
+    assert(testEqual(sylvan_or(one, two), sylvan_compose(a_or_b, map)));
+
+    assert(testEqual(sylvan_and(one, two), sylvan_compose(sylvan_and(a, b), map)));
+
+    sylvan_gc_enable();
+}
+
+/** GC testing */
+VOID_TASK_2(gctest_fill, int, levels, int, width)
+{
+    if (levels > 1) {
+        int i;
+        for (i=0; i<width; i++) { SPAWN(gctest_fill, levels-1, width); }
+        for (i=0; i<width; i++) { SYNC(gctest_fill); }
+    } else {
+        sylvan_deref(make_random(0, 10));
+    }
+}
+
+void report_table()
+{
+    llmsset_t __sylvan_get_internal_data();
+    llmsset_t tbl = __sylvan_get_internal_data();
+    size_t filled = llmsset_get_filled(tbl);
+    size_t total = llmsset_get_size(tbl);
+    printf("done, table: %0.1f%% full (%zu nodes).\n", 100.0*(double)filled/total, filled);
+}
+
+void test_gc(int threads)
+{
+    int N_canaries = 16;
+    BDD canaries[N_canaries];
+    char* hashes[N_canaries];
+    char* hashes2[N_canaries];
+    int i,j;
+    for (i=0;i<N_canaries;i++) {
+        canaries[i] = make_random(0, 10);
+        hashes[i] = (char*)malloc(80);
+        hashes2[i] = (char*)malloc(80);
+        sylvan_getsha(canaries[i], hashes[i]);
+        sylvan_test_isbdd(canaries[i]);
+    }
+    assert(sylvan_count_refs() == (size_t)N_canaries);
+    for (j=0;j<10*threads;j++) {
+        CALL(gctest_fill, 6, 5);
+        for (i=0;i<N_canaries;i++) {
+            sylvan_test_isbdd(canaries[i]);
+            sylvan_getsha(canaries[i], hashes2[i]);
+            assert(strcmp(hashes[i], hashes2[i]) == 0);
+        }
+    }
+    assert(sylvan_count_refs() == (size_t)N_canaries);
+}
+
 void runtests(int threads)
 {
-    printf(BOLD "Testing LL MS Set\n" NC);
-    printf("Running singlethreaded test... ");
-    fflush(stdout);
-    test_llmsset();
-    printf(LGREEN "success" NC "!\n");
-    printf("Running multithreaded test... ");
-    fflush(stdout);
-    if (1/*skip*/) {
-        printf("... " LMAGENTA "skipped" NC ".\n");
-    }
-    else if (test_llmsset2()) {
-        printf("... " LGREEN "success" NC "!\n");
-    } else {
-        printf(LRED "error" NC "!\n");
-        exit(1);
-    }
+#if USE_NUMA
+    numa_distribute(threads);
+#endif
 
-    lace_init(threads, 100000, 0);
+    lace_init(threads, 100000);
+    lace_startup(0, NULL, NULL);
 
     printf(BOLD "Testing Sylvan\n");
 
@@ -388,6 +416,31 @@ void runtests(int threads)
         test_cube();
         sylvan_quit();
     }
+    printf(LGREEN "success" NC "!\n");
+
+    printf(NC "Testing relational products... ");
+    fflush(stdout);
+    for (j=0;j<20;j++) {
+        sylvan_init(16, 16, 1);
+        test_relprod();
+        sylvan_quit();
+    }
+    printf(LGREEN "success" NC "!\n");
+
+    printf(NC "Testing function composition... ");
+    fflush(stdout);
+    for (j=0;j<20;j++) {
+        sylvan_init(16, 16, 1);
+        test_compose();
+        sylvan_quit();
+    }
+    printf(LGREEN "success" NC "!\n");
+
+    printf(NC "Testing garbage collection... ");
+    fflush(stdout);
+    sylvan_init(14, 10, 1);
+    test_gc(threads);
+    sylvan_quit();
     printf(LGREEN "success" NC "!\n");
 
     printf(NC "Testing operators... ");

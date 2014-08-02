@@ -1,3 +1,19 @@
+/*
+ * Copyright 2011-2014 Formal Methods and Tools, University of Twente
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef LLMSSET_H
 #define LLMSSET_H
 
@@ -8,39 +24,34 @@ typedef struct llmsset
     size_t            table_size;   // size of the hash table (number of slots) --> power of 2!
     size_t            mask;         // size-1
     size_t            f_size;
-    int16_t           padded_data_length;
-    int16_t           key_length;
-    int16_t           data_length;
     int16_t           threshold;    // number of iterations for insertion until returning error
 } *llmsset_t;
 
-/**
- * Calculate size of buckets in data array (padded)
- */
-#define LLMSSET_PDS(x) (((x) <= 2) ? (x) : ((x) <= 4) ? 4 : ((x) <= 8) ? 8 : (((x)+15)&(~15)))
+// Every key is 16 bytes, also inserted data same size, also padded size is 16 bytes
+#define LLMSSET_LEN 16
 
 /**
  * Translate an index to a pointer (data array)
  */
 static inline void*
-llmsset_index_to_ptr(const llmsset_t dbs, size_t index, size_t data_length)
+llmsset_index_to_ptr(const llmsset_t dbs, size_t index)
 {
-    return dbs->data + index * LLMSSET_PDS(data_length);
+    return dbs->data + index * LLMSSET_LEN;
 }
 
 /**
  * Translate a pointer (data array) to index
  */
 static inline size_t
-llmsset_ptr_to_index(const llmsset_t dbs, void* ptr, size_t data_length)
+llmsset_ptr_to_index(const llmsset_t dbs, void* ptr)
 {
-    return ((size_t)ptr - (size_t)dbs->data) / LLMSSET_PDS(data_length);
+    return ((size_t)ptr - (size_t)dbs->data) / LLMSSET_LEN;
 }
 
 /**
  * Create and free a lockless MS set
  */
-llmsset_t llmsset_create(size_t key_length, size_t data_length, size_t table_size);
+llmsset_t llmsset_create(size_t table_size);
 void llmsset_free(llmsset_t dbs);
 
 /**
@@ -65,6 +76,7 @@ void llmsset_clear_multi(const llmsset_t dbs, size_t my_id, size_t n_workers);
  * The _safe version uses a CAS operation, the _unsafe version a normal memory operation.
  * Use the _unsafe version unless you are bothered by false negatives
  */
+int llmsset_is_marked(const llmsset_t dbs, uint64_t index);
 int llmsset_mark_unsafe(const llmsset_t dbs, uint64_t index);
 int llmsset_mark_safe(const llmsset_t dbs, uint64_t index);
 
@@ -78,4 +90,10 @@ void llmsset_print_size(llmsset_t dbs, FILE *f);
 size_t llmsset_get_filled(const llmsset_t dbs);
 size_t llmsset_get_size(const llmsset_t dbs);
 size_t llmsset_get_insertindex_multi(const llmsset_t dbs, size_t my_id, size_t n_workers);
+
+/**
+ * Self-test for internal method
+ */
+void llmsset_test_multi(const llmsset_t dbs, size_t n_workers);
+
 #endif

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2011-2014 Formal Methods and Tools, University of Twente
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <stdint.h>
 #include <stdio.h> // for FILE
 #include <lace.h> // for definitions
@@ -32,6 +48,8 @@ typedef char __sylvan_check_size_t_is_8_bytes[(sizeof(uint64_t) == sizeof(size_t
 typedef uint64_t BDD;       // low 40 bits used for index, highest bit for complement, rest 0
 // BDDSET uses the BDD node hash table. A BDDSET is an ordered BDD.
 typedef uint64_t BDDSET;    // encodes a set of variables (e.g. for exists etc.)
+// BDDMAP also uses the BDD node hash table. A BDDMAP is *not* an ordered BDD.
+typedef uint64_t BDDMAP;    // encodes a function of variable->BDD (e.g. for substitute)
 typedef uint32_t BDDVAR;    // low 24 bits only
 
 #define sylvan_complement   ((uint64_t)0x8000000000000000)
@@ -94,9 +112,10 @@ void sylvan_gc_disable();
 /* Unary, binary and if-then-else operations */
 #define sylvan_not(a) (((BDD)a)^sylvan_complement)
 TASK_DECL_4(BDD, sylvan_ite, BDD, BDD, BDD, BDDVAR);
-static inline BDD sylvan_ite(BDD a, BDD b, BDD c) { return CALL(sylvan_ite, a, b, c, 0); }
-static inline BDD sylvan_xor(BDD a, BDD b) { return sylvan_ite(a, sylvan_not(b), b); }
-static inline BDD sylvan_equiv(BDD a, BDD b) { return sylvan_ite(a, b, sylvan_not(b)); }
+#define sylvan_ite(a,b,c) (CALL(sylvan_ite,a,b,c,0))
+/* Do not use nested calls for xor/equiv parameter b! */
+#define sylvan_xor(a,b) (CALL(sylvan_ite,a,sylvan_not(b),b,0))
+#define sylvan_equiv(a,b) (CALL(sylvan_ite,a,b,sylvan_not(b),0))
 #define sylvan_or(a,b) sylvan_ite(a, sylvan_true, b)
 #define sylvan_and(a,b) sylvan_ite(a,b,sylvan_false)
 #define sylvan_nand(a,b) sylvan_not(sylvan_and(a,b))
@@ -109,38 +128,22 @@ static inline BDD sylvan_equiv(BDD a, BDD b) { return sylvan_ite(a, b, sylvan_no
 
 /* Existential and Universal quantifiers */
 TASK_DECL_3(BDD, sylvan_exists, BDD, BDD, BDDVAR);
-static inline BDD sylvan_exists(BDD a, BDD variables) { return CALL(sylvan_exists, a, variables, 0); }
-static inline BDD sylvan_forall(BDD a, BDD variables) { return sylvan_not(CALL(sylvan_exists, sylvan_not(a), variables, 0)); }
+#define sylvan_exists(a, vars) (CALL(sylvan_exists, a, vars, 0))
+#define sylvan_forall(a, vars) (sylvan_not(CALL(sylvan_exists, sylvan_not(a), vars, 0)))
 
 /**
- * Specialized RelProdS using paired variables (X even, X' odd)
- * For example, variable x_1 is paired with x_0, with x_1 being the X' equivalent of x_0.
- * When using relprods to generate the 'next' states, you will want to
- * use <var> 0,2,4,6,8 etc for the 'state' booleans, and 1,3,5,7,9 etc for the 'next state' booleans
+ * Relational Product for paired variables
+ * Assumes variables x,x' are paired, x is even, x'=x+1
  */
-TASK_DECL_4(BDD, sylvan_relprods, BDD, BDD, BDD, BDDVAR);
-static inline BDD sylvan_relprods(BDD a, BDD b, BDD vars) { return CALL(sylvan_relprods, a, b, vars, 0); }
-
-typedef void (*void_cb)();
-int sylvan_relprods_analyse(BDD a, BDD b, void_cb cb_in, void_cb cb_out);
+TASK_DECL_4(BDD, sylvan_relprod_paired, BDD, BDD, BDDSET, BDDVAR);
+#define sylvan_relprod_paired(s,trans,vars) (CALL(sylvan_relprod_paired,(s),(trans),(vars),0))
 
 /**
- * Reversed RelProdS using paired variables (X even, X' odd)
+ * Backward relational product for paired variables
+ * Assumes variables x,x' are paired, x is even, x'=x+1
  */
-TASK_DECL_4(BDD, sylvan_relprods_reversed, BDD, BDD, BDD, BDDVAR);
-static inline BDD sylvan_relprods_reversed(BDD a, BDD b, BDD vars) { return CALL(sylvan_relprods_reversed, a, b, vars, 0); }
-
-/**
- * RelProd: \exists vars (a \and b)
- */
-TASK_DECL_4(BDD, sylvan_relprod, BDD, BDD, BDD, BDDVAR);
-static inline BDD sylvan_relprod(BDD a, BDD b, BDD vars) { return CALL(sylvan_relprod, a, b, vars, 0); }
-
-/**
- * Calculate substitution from X to X' using paired variables (X even, X' odd)
- */
-TASK_DECL_3(BDD, sylvan_substitute, BDD, BDD, BDDVAR);
-static inline BDD sylvan_substitute(BDD a, BDD vars) { return CALL(sylvan_substitute, a, vars, 0); }
+TASK_DECL_4(BDD, sylvan_relprod_paired_prev, BDD, BDD, BDDSET, BDDVAR);
+#define sylvan_relprod_paired_prev(s,trans,vars) (CALL(sylvan_relprod_paired_prev,(s),(trans),(vars),0))
 
 /**
  * Calculate a@b (a constrain b), such that (b -> a@b) = (b -> a)
@@ -153,7 +156,13 @@ static inline BDD sylvan_substitute(BDD a, BDD vars) { return CALL(sylvan_substi
  *   - a@not(a) = 0
  */
 TASK_DECL_3(BDD, sylvan_constrain, BDD, BDD, BDDVAR);
-static inline BDD sylvan_constrain(BDD a, BDD b) { return CALL(sylvan_constrain, a, b, 0); }
+#define sylvan_constrain(f,c) (CALL(sylvan_constrain, (f), (c), 0))
+
+TASK_DECL_3(BDD, sylvan_restrict, BDD, BDD, BDDVAR);
+#define sylvan_restrict(f,c) (CALL(sylvan_restrict, (f), (c), 0))
+
+TASK_DECL_3(BDD, sylvan_compose, BDD, BDDMAP, BDDVAR);
+#define sylvan_compose(f,m) (CALL(sylvan_compose, (f), (m), 0))
 
 /**
  * Calculate the support of a BDD.
@@ -161,7 +170,7 @@ static inline BDD sylvan_constrain(BDD a, BDD b) { return CALL(sylvan_constrain,
  * It is also the set of all variables in the BDD nodes of the BDD.
  */
 TASK_DECL_1(BDD, sylvan_support, BDD);
-static inline BDD sylvan_support(BDD bdd) { return CALL(sylvan_support, bdd); }
+#define sylvan_support(bdd) (CALL(sylvan_support, bdd))
 
 /**
  * Reset all counters (for statistics)
@@ -196,6 +205,31 @@ int sylvan_set_in(BDDSET set, BDDVAR var);
 size_t sylvan_set_count(BDDSET set);
 void sylvan_set_toarray(BDDSET set, BDDVAR *arr);
 BDDSET sylvan_set_fromarray(BDDVAR *arr, size_t length);
+void sylvan_test_isset(BDDSET set);
+
+/**
+ * BDDMAP maps BDDVAR-->BDD, implemented using BDD nodes.
+ * Based on disjunction of variables, but with high edges to BDDs instead of True terminals.
+ */
+// empty bddmap
+static inline BDDMAP sylvan_map_empty() { return sylvan_false; }
+static inline int sylvan_map_isempty(BDDMAP map) { return map == sylvan_false ? 1 : 0; }
+// add key-value pairs to the bddmap
+BDDMAP sylvan_map_add(BDDMAP map, BDDVAR key, BDD value);
+BDDMAP sylvan_map_addall(BDDMAP map_1, BDDMAP map_2);
+// remove key-value pairs from the bddmap
+BDDMAP sylvan_map_remove(BDDMAP map, BDDVAR key);
+BDDMAP sylvan_map_removeall(BDDMAP map, BDDMAP toremove);
+// iterate through all pairs
+static inline BDDVAR sylvan_map_key(BDDMAP map) { return sylvan_var(map); }
+static inline BDD sylvan_map_value(BDDMAP map) { return sylvan_high(map); }
+static inline BDDMAP sylvan_map_next(BDDMAP map) { return sylvan_low(map); }
+// is a key in the map
+int sylvan_map_in(BDDMAP map, BDDVAR key);
+// count number of keys
+size_t sylvan_map_count(BDDMAP map);
+// convert a BDDSET (disjunction of variables) to a map, with all variables pointing on the value
+BDDMAP sylvan_set_to_map(BDDSET set, BDD value);
 
 /**
  * Node creation primitive.
@@ -214,6 +248,10 @@ void sylvan_fprintdot_nocomp(FILE *out, BDD bdd);
 
 void sylvan_print(BDD bdd);
 void sylvan_fprint(FILE *f, BDD bdd);
+
+void sylvan_printsha(BDD bdd);
+void sylvan_fprintsha(FILE *f, BDD bdd);
+void sylvan_getsha(BDD bdd, char *target); // target must be at least 65 bytes...
 
 /**
  * Convert normal BDD to a BDD without complement edges
@@ -269,7 +307,7 @@ BDD sylvan_sat_one_bdd(BDD bdd);
 #define sylvan_pick_cube sylvan_sat_one_bdd
 
 TASK_DECL_1(long double, sylvan_pathcount, BDD);
-static inline long double sylvan_pathcount(BDD bdd) { return CALL(sylvan_pathcount, bdd); }
+#define sylvan_pathcount(bdd) (CALL(sylvan_pathcount, bdd))
 
 // TASK_DECL_1(size_t, sylvan_nodecount, BDD);
 size_t sylvan_nodecount(BDD a);
@@ -300,6 +338,8 @@ void sylvan_serialize_totext(FILE *out);
 void sylvan_serialize_tofile(FILE *out);
 void sylvan_serialize_fromfile(FILE *in);
 
+/* For debugging: if the bdd is not a well-formed BDD, assertions fail. */
+void sylvan_test_isbdd(BDD bdd);
 #endif
 
 
