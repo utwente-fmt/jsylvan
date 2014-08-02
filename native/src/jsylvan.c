@@ -132,7 +132,8 @@ Java_jsylvan_JSylvan_nodecount(JNIEnv *env, jclass cl, jlong bdd)
 JNIEXPORT void JNICALL
 Java_jsylvan_JSylvan_initLace(JNIEnv *env, jclass cl, jlong threads, jlong stacksize)
 {
-    lace_init(threads, stacksize, 0);
+    lace_init(threads, stacksize);
+    lace_startup(0, NULL, NULL);
 }
 
 JNIEXPORT void JNICALL
