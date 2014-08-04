@@ -82,7 +82,7 @@ Java_jsylvan_JSylvan_makeExists(JNIEnv *env, jclass cl, jlong a, jlong b)
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeNext(JNIEnv *env, jclass cl, jlong a, jlong b, jlong variables)
 {
-    return sylvan_relprods(a, b, variables);
+    return sylvan_relprod_paired(a, b, variables);
 }
 
 JNIEXPORT jlong JNICALL
