@@ -2,12 +2,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>jsylvan</groupId>
-    <artifactId>jsylvan-java</artifactId>
+    <artifactId>jsylvan</artifactId>
     <name>JSylvan Java code</name>
     <packaging>jar</packaging>
     <version>1</version>
 
     <build>
+        <finalName>${project.artifactId}</finalName>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
