@@ -16,6 +16,8 @@
 
 package jsylvan;
 
+import java.io.IOException;
+
 class MCFile
 {
     private long vectorSize;
@@ -61,6 +63,13 @@ class MCFile
         if (args.length == 0) {
             System.out.println("Use: jsylvan.MCFile <filename> [workers]");
             return;
+        }
+
+        // Load library first
+        try {
+            NativeUtils.loadLibraryFromJar("/native/libsylvan-1.so");
+        } catch (IOException ex) {
+            ex.printStackTrace();
         }
 
         if (args.length == 2) JSylvan.initialize(Integer.parseInt(args[1]), 100000, 30, 26, 4);

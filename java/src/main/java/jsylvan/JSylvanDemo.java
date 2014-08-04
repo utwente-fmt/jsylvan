@@ -22,6 +22,13 @@ public class JSylvanDemo
 {
     public static void main(String[] args)
     {
+        // Load library first
+        try {
+            NativeUtils.loadLibraryFromJar("/native/libsylvan-1.so");
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+
         // to use JSylvan, initialize it...
         // 4 workers (for a 4 core machine, obviously set this to the number of cores)
         // a work-stealing stack for each worker of 100000 entries (bit much, but that's fine)

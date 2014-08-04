@@ -141,12 +141,4 @@ public class JSylvan
 
     private static native void initLace(long workers, long stacksize);
     private static native void initSylvan(int tablesize, int cachesize, int granularity);
-
-    static {
-        try {
-            NativeUtils.loadLibraryFromJar("/native/libsylvan-1.so");
-        } catch (IOException ex) {
-            ex.printStackTrace();
-        }
-    }
 }
