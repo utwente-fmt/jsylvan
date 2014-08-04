@@ -86,6 +86,18 @@ Java_jsylvan_JSylvan_makeNext(JNIEnv *env, jclass cl, jlong a, jlong b, jlong va
 }
 
 JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeConstrain(JNIEnv *env, jclass cl, jlong a, jlong b)
+{
+    return sylvan_constrain(a, b);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeRestrict(JNIEnv *env, jclass cl, jlong a, jlong b)
+{
+    return sylvan_restrict(a, b);
+}
+
+JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeImplies(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
     return sylvan_imp(a, b);
