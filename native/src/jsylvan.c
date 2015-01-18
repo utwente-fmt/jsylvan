@@ -104,7 +104,7 @@ Java_jsylvan_JSylvan_makeImplies(JNIEnv *env, jclass cl, jlong a, jlong b)
 }
 
 JNIEXPORT jlong JNICALL
-Java_jsylvan_JSYlvan_makeSupport(JNIEnv *env, jclass cl, jlong bdd)
+Java_jsylvan_JSylvan_makeSupport(JNIEnv *env, jclass cl, jlong bdd)
 {
     return sylvan_support(bdd);
 }
