@@ -8,6 +8,10 @@ JSylvan and Sylvan are developed (&copy; 2011-2014) by the [Formal Methods and T
 
 See also: https://github.com/utwente-fmt/sylvan
 
+Compiling
+---------
+Requires jni.h in the path for Maven to find.
+
 Usage
 -----
 You can find a simple example in `java/src/main/java/jsylvan/JSylvanDemo.java`.

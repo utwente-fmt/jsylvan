@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <jni.h>
 #include <sylvan.h>
+#include <lace.h>
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeTrue(JNIEnv *env, jclass cl)
@@ -46,66 +47,77 @@ Java_jsylvan_JSylvan_makeNot(JNIEnv *env, jclass cl, jlong bdd)
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeAnd(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_and(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeOr(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_or(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeIte(JNIEnv *env, jclass cl, jlong a, jlong b, jlong c)
 {
+    LACE_ME;
     return sylvan_ite(a, b, c);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeEquals(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_equiv(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeNotEquals(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_xor(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeExists(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_exists(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeNext(JNIEnv *env, jclass cl, jlong a, jlong b, jlong variables)
 {
-    return sylvan_relprod_paired(a, b, variables);
+    LACE_ME;
+    return sylvan_relnext(a, b, variables);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeConstrain(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_constrain(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeRestrict(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_restrict(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeImplies(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
+    LACE_ME;
     return sylvan_imp(a, b);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeSupport(JNIEnv *env, jclass cl, jlong bdd)
 {
+    LACE_ME;
     return sylvan_support(bdd);
 }
 
@@ -148,12 +160,14 @@ Java_jsylvan_JSylvan_deref(JNIEnv *env, jclass cl, jlong bdd)
 JNIEXPORT jdouble JNICALL
 Java_jsylvan_JSylvan_satcount(JNIEnv *env, jclass cl, jlong bdd, jlong variables)
 {
+    LACE_ME;
     return sylvan_satcount(bdd, variables);
 }
 
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_nodecount(JNIEnv *env, jclass cl, jlong bdd)
 {
+    LACE_ME;
     return sylvan_nodecount(bdd); // note: unsigned/signed mismatch...
 }
 
@@ -167,7 +181,10 @@ Java_jsylvan_JSylvan_initLace(JNIEnv *env, jclass cl, jlong threads, jlong stack
 JNIEXPORT void JNICALL
 Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jint tablesize, jint cachesize, jint granularity)
 {
-    sylvan_init(tablesize, cachesize, granularity);
+    sylvan_set_sizes(tablesize, tablesize, cachesize, cachesize);
+    sylvan_set_granularity(granularity);
+    sylvan_init_package();
+    sylvan_init_mtbdd();
 
     // the JSylvan java class has static vars one and zero
     jfieldID one_field = (*env)->GetStaticFieldID(env, cl, "one", "J");
@@ -195,7 +212,7 @@ Java_jsylvan_JSylvan_fprint(JNIEnv *env, jclass cl, jstring filename, jlong bdd)
 JNIEXPORT void JNICALL
 Java_jsylvan_JSylvan_printDot(JNIEnv *env, jclass cl, jlong bdd)
 {
-    sylvan_printdot(bdd);
+    sylvan_printdot(bdd, NULL);
 }
 
 JNIEXPORT void JNICALL
@@ -239,6 +256,7 @@ TASK_3(BDD, union_par, BDD*, arr, int, first, int, last)
 JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeUnionPar(JNIEnv *env, jclass cl, jlongArray arr)
 {
+    LACE_ME;
     jsize len = (*env)->GetArrayLength(env, arr);
     if (len == 0) return (jlong)sylvan_false;
 
