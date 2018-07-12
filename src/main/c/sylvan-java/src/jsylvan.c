@@ -21,18 +21,6 @@
 #include <lace.h>
 
 JNIEXPORT jlong JNICALL
-Java_jsylvan_JSylvan_makeTrue(JNIEnv *env, jclass cl)
-{
-    return sylvan_true;
-}
-
-JNIEXPORT jlong JNICALL
-Java_jsylvan_JSylvan_makeFalse(JNIEnv *env, jclass cl)
-{
-    return sylvan_false;
-}
-
-JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeVar(JNIEnv *env, jclass cl, jint var)
 {
     return sylvan_ithvar(var);
@@ -157,6 +145,14 @@ Java_jsylvan_JSylvan_deref(JNIEnv *env, jclass cl, jlong bdd)
     sylvan_deref(bdd);
 }
 
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_count_refs(JNIEnv *env, jclass cl)
+{
+    return sylvan_count_refs();
+    (void)env;
+    (void)cl;
+}
+
 JNIEXPORT jdouble JNICALL
 Java_jsylvan_JSylvan_satcount(JNIEnv *env, jclass cl, jlong bdd, jlong variables)
 {
@@ -179,7 +175,7 @@ Java_jsylvan_JSylvan_initLace(JNIEnv *env, jclass cl, jlong threads, jlong stack
 }
 
 JNIEXPORT void JNICALL
-Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jint tablesize, jint cachesize, jint granularity)
+Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jlong tablesize, jlong cachesize, jint granularity)
 {
     sylvan_set_sizes(tablesize, tablesize, cachesize, cachesize);
     sylvan_set_granularity(granularity);
@@ -275,6 +271,7 @@ Java_jsylvan_JSylvan_disableGC(JNIEnv *env, jclass cl)
     (void)env;
     (void)cl;
 }
+
 JNIEXPORT void JNICALL
 Java_jsylvan_JSylvan_enableGC(JNIEnv *env, jclass cl)
 {

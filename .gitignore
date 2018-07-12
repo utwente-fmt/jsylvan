@@ -1,1 +1,4 @@
-**/target
+target
+src/main/c/sylvan-java/src/jsylvan_JSylvan.h
+src/main/c/sylvan-java/src/jsylvan_MCFile.h
+src/main/resources

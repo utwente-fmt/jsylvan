@@ -1,54 +1,123 @@
-<project>
+<!--
+  Copyright 2018 Tom van Dijk
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+ -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>jsylvan</groupId>
-    <artifactId>jsylvan-full</artifactId>
-    <name>JSylvan</name>
-    <version>1</version>
-    <packaging>pom</packaging>
+    <groupId>nl.tvandijk</groupId>
+    <artifactId>sylvan</artifactId>
+    <packaging>jar</packaging>
+    <version>1.0.0-SNAPSHOT</version>
+    <name>sylvan</name>
+    <url>https://github.com/trolando/sylvan-java</url>
+    <description>Java bindings for Sylvan, a multi-core implementation of decision diagrams.</description>
 
-    <modules>
-        <module>native</module>
-        <module>java</module>
-    </modules>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Tom van Dijk</name>
+            <email>tom@tvandijk.nl</email>
+        </developer>
+    </developers>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <sylvan.git.remote>https://github.com/trolando/sylvan.git</sylvan.git.remote>
+    </properties>
 
     <build>
         <plugins>
             <plugin>
-                <groupId>com.github.goldin</groupId>
-                <artifactId>copy-maven-plugin</artifactId>
-                <version>0.2.5</version>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>properties-maven-plugin</artifactId>
+                <version>1.0.0</version>
                 <executions>
                     <execution>
-                        <id>create-artifact</id>
-                        <phase>package</phase>
+                        <phase>initialize</phase>
                         <goals>
-                            <goal>copy</goal>
+                            <goal>read-project-properties</goal>
                         </goals>
                         <configuration>
+                            <files>
+                                <file>${basedir}/sylvan.properties</file>
+                            </files>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.1</version>
+                <configuration>
+                    <source>1.8</source>
+                    <target>1.8</target>
+                    <testSource>1.8</testSource>
+                    <testTarget>1.8</testTarget>
+                    <compilerArgs>
+                        <arg>-Xlint:unchecked</arg>
+                        <!-- Generate the native header file -->
+                        <arg>-h</arg>
+                        <arg>${basedir}/src/main/c/sylvan-java/src</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>1.1.1</version>
+                <executions>
+                    <execution>
+                        <id>build-sylvan-c</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${basedir}/src/main/c/sylvan-java/build-sylvan.sh</executable>
+                            <arguments>
+                                <argument>${sylvan.git.remote}</argument>
+                                <argument>${sylvan.git.reference}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>2.5</version>
+                <executions>
+                    <execution>
+                        <id>copy-resources</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
                             <resources>
                                 <resource>
-                                    <targetPath>${project.build.directory}</targetPath>
-                                    <mkdir>true</mkdir>
-                                </resource>
-                                <resource>
-                                    <targetPath>${project.build.directory}</targetPath>
-                                    <dependency>
-                                        <includeScope>runtime</includeScope>
-                                    </dependency>
-                                    <stripVersion>true</stripVersion>
-                                </resource>
-                                <resource>
-                                    <targetPath>${project.build.directory}</targetPath>
-                                    <file>${project.build.directory}/jsylvan.jar</file>
-                                    <destFileName>jsylvan-full.jar</destFileName>
-                                </resource>
-                                <resource>
-                                    <targetPath>${project.build.directory}/jsylvan-full.jar</targetPath>
-                                    <file>${project.build.directory}/libsylvan.so</file>
-                                    <destFileName>native/libsylvan.so</destFileName>
-                                    <pack>true</pack>
-                                    <update>true</update>
+                                    <directory>${basedir}/src/main/resources</directory>
+                                    <filtering>false</filtering>
                                 </resource>
                             </resources>
                         </configuration>
@@ -56,23 +125,13 @@
                 </executions>
             </plugin>
         </plugins>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <includes>
+                    <include>libsylvan*</include>
+                </includes>
+            </resource>
+        </resources>
     </build>
-
-     <dependencies>
-        <dependency>
-            <groupId>sylvan</groupId>
-            <artifactId>libsylvan</artifactId>
-            <version>1</version>
-            <scope>runtime</scope>
-            <type>so</type>
-        </dependency>
-        <dependency>
-            <groupId>jsylvan</groupId>
-            <artifactId>jsylvan</artifactId>
-            <version>1</version>
-            <scope>runtime</scope>
-            <type>jar</type>
-        </dependency>
-    </dependencies>
-
 </project>

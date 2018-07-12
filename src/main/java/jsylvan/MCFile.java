@@ -21,7 +21,7 @@ import java.io.IOException;
 class MCFile
 {
     private long vectorSize;
-    private long bitsPerInteger;
+    private long totalBits;
 
     private long initial;
     private long domain;
@@ -36,8 +36,8 @@ class MCFile
         long states = initial;
         long new_states = JSylvan.ref(states);
         do {
-            System.out.format("Level %d\n", level_counter++);
-            // System.out.format("Level %d: %.0f states\n", level_counter++, JSylvan.satcount(states, domain)); // to do variables
+            // System.out.format("Level %d\n", level_counter++);
+            System.out.format("Level %d: %.0f states\n", level_counter++, JSylvan.satcount(states, domain)); // to do variables
             long cur_states = new_states;
             new_states = JSylvan.getFalse();
             for (int i=0; i<relations.length; i++) {
@@ -67,17 +67,17 @@ class MCFile
 
         // Load library first
         try {
-            NativeUtils.loadLibraryFromJar("/native/libsylvan-1.so");
+            int w = 4;
+            if (args.length == 2) w = Integer.parseInt(args[1]);
+            JSylvan.initialize(w, 0, 26, 25, 1);
         } catch (IOException ex) {
             ex.printStackTrace();
+            return;
         }
-
-        if (args.length == 2) JSylvan.initialize(Integer.parseInt(args[1]), 100000, 30, 26, 4);
-        else JSylvan.initialize(4, 100000, 30, 26, 4);
 
         MCFile f = MCFile.fromFile(args[0]);
 
-        System.out.format("Read '%s': state vector: %d ints, %d bits per int, %d transition groups\n", args[0], f.vectorSize, f.bitsPerInteger, f.relations.length);
+        System.out.format("Read '%s': state vector: %d ints, %d bits, %d transition groups\n", args[0], f.vectorSize, f.totalBits, f.relations.length);
         System.out.format("Initial states: %d BDD nodes\n", JSylvan.nodecount(f.initial));
         for (int i=0; i<f.relations.length; i++) System.out.format("Transition %d: %d BDD nodes\n", i, JSylvan.nodecount(f.relations[i]));
 

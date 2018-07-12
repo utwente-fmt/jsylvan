@@ -20,27 +20,32 @@ import java.io.IOException;
 import java.util.List;
 import java.util.ArrayList;
 
+/**
+ * Java bindings for Sylvan.
+ *
+ * This is only a very basic Java-Sylvan bridge.
+ * Notably unsupported is calling Sylvan from different threads.
+ * The only thread that may use JSylvan is the thread that initialized JSylvan.
+ *
+ * A BDD is a 64-bit long integer.
+ * Users must explicitly reference used BDDs using methods ref() and deref().
+ */
 public class JSylvan
 {
     /**
-     * NOTE: you will have to manage references.
-     * After every call to makeXXX, call ref.
-     * To dereference, call deref.
-     */
-
-    /**
-     * Initialize: number of workers, size of the work-stealing stack (Lace)
+     * Initialize both Lace and Sylvan.
+     * : number of workers, size of the work-stealing stack (Lace)
      *             2^tablesize nodes and 2^cachesize cache entries
      *             also: granularity (default: 4, sensible values: 1-10 or so) influences operations cache
      *                   higher granularity = use operations cache less often
      */
-    public static void initialize(long workers, long stacksize, int tablesize, int cachesize, int granularity)
+    public static void initialize(long workers, long stacksize, int tablesize, int cachesize, int granularity) throws IOException
     {
         if (instance != null) throw new RuntimeException("JSylvan already initialized!");
         instance = new JSylvan();
 
         initLace(workers, stacksize);
-        initSylvan(tablesize, cachesize, granularity);
+        initSylvan(1L<<tablesize, 1L<<cachesize, granularity);
     }
 
 
@@ -70,6 +75,7 @@ public class JSylvan
 
     public static native long ref(long bdd); // returns same bdd
     public static native void deref(long bdd);
+    public static native long count_refs(); // returns number of references
 
     public static native int getVar(long bdd);
     public static native long getIf(long bdd);
@@ -101,14 +107,14 @@ public class JSylvan
     public static native long makeSupport(long bdd);
 
     /**
-     * Create a BDD set (disjunction of variables) which you can use for exists and satcount
+     * Create a BDD set (conjunction of variables) which you can use for exists and satcount
      */
     public static long makeSet(int[] variables)
     {
-        long result = zero;
+        long result = one;
         for (int i=0; i<variables.length; i++) {
             long var = ref(makeVar(variables[i])), old = ref(result);
-            result = makeOr(result, var);
+            result = makeAnd(result, var);
             deref(var);
             deref(old);
         }
@@ -118,10 +124,10 @@ public class JSylvan
     public static int[] fromSet(long bdd)
     {
         List<Integer> temp = new ArrayList<Integer>();
-        while (bdd != zero) {
-            if (bdd == one) throw new RuntimeException("not a BDD set");
+        while (bdd != one) {
+            if (bdd == zero) throw new RuntimeException("not a BDD set");
             temp.add(getVar(bdd));
-            bdd = getElse(bdd);
+            bdd = getThen(bdd);
         }
         int[] res = new int[temp.size()];
         for (int i=0; i<res.length; i++) res[i] = temp.get(i);
@@ -130,15 +136,21 @@ public class JSylvan
 
     /* Private stuff */
 
-    private static long zero;
-    private static long one;
+    private static long zero;  // False
+    private static long one;  // True
 
-    private JSylvan()
+    private JSylvan() throws IOException
     {
+        try {
+            NativeUtils.loadLibraryFromJar("/linux-x64/libsylvan-java.so");
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            throw ex;
+        }
     }
 
     private static JSylvan instance = null;
 
     private static native void initLace(long workers, long stacksize);
-    private static native void initSylvan(int tablesize, int cachesize, int granularity);
+    private static native void initSylvan(long tablesize, long cachesize, int granularity);
 }
