@@ -390,3 +390,100 @@ Java_jsylvan_JSylvan_enableGC(JNIEnv *env, jclass cl)
     (void)env;
     (void)cl;
 }
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapEmpty(JNIEnv *env, jclass cl)
+{
+    return sylvan_map_empty();
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_jsylvan_JSylvan_mapIsEmpty(JNIEnv *env, jclass cl, jlong map)
+{
+    return sylvan_map_isempty(map);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jint JNICALL
+Java_jsylvan_JSylvan_mapKey(JNIEnv *env, jclass cl, jlong map)
+{
+    return sylvan_map_key(map);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapValue(JNIEnv *env, jclass cl, jlong map)
+{
+    return sylvan_map_value(map);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapNext(JNIEnv *env, jclass cl, jlong map)
+{
+    return sylvan_map_next(map);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_jsylvan_JSylvan_mapContains(JNIEnv *env, jclass cl, jlong map, jint key)
+{
+    return sylvan_map_contains(map, key);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapCount(JNIEnv *env, jclass cl, jlong map)
+{
+    return sylvan_map_count(map);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapAdd(JNIEnv *env, jclass cl, jlong map, jint key, jlong value)
+{
+    return sylvan_map_add(map, key, value);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapUpdate(JNIEnv *env, jclass cl, jlong map1, jlong map2)
+{
+    return sylvan_map_addall(map1, map2);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapRemove(JNIEnv *env, jclass cl, jlong map, jint key)
+{
+    return sylvan_map_remove(map, key);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_mapRemoveAll(JNIEnv *env, jclass cl, jlong map, jlong variables)
+{
+    return sylvan_map_removeall(map, variables);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_compose(JNIEnv *env, jclass cl, jlong bdd, jlong map)
+{
+    LACE_ME;
+    return sylvan_compose(bdd, map);
+    (void)env;
+    (void)cl;
+}

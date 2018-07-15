@@ -32,7 +32,6 @@ import java.util.ArrayList;
  *
  * Missing functions:
  * - nand, nor, invimp, diff, less
- * - compose and functions to manipulate maps
  * - sat_one (give one satisfying assignment)
  * - visitors, serialization
  */
@@ -330,6 +329,41 @@ public class JSylvan
         for (int i=0; i<res.length; i++) res[i] = temp.get(i);
         return res;
     }
+
+    /**
+     * Functionality of "BDD mapping" used by compose
+     * - mapEmpty: return an empty mapping
+     * - mapIsEmpty: return true if a mapping is empty
+     * - mapKey: return key of first entry in the mapping
+     * - mapValue: return value of first entry in the mapping
+     * - mapNext: return mapping without first entry
+     * - mapContains: return true if key in mapping
+     * - mapCount: return number of entries in mapping
+     * - mapAdd: add a (key,value) to the mapping
+     * - mapUpdate: return map1 for values not in map2, map2 otherwise
+     * - mapRemove: remove a key from the mapping
+     * - mapRemoveAll: remove multiple keys from the mapping
+     */
+
+    public static native long mapEmpty();
+    public static native boolean mapIsEmpty(long map);
+    public static native int mapKey(long map);
+    public static native long mapValue(long map);
+    public static native long mapNext(long map);
+    public static native boolean mapContains(long map, int key);
+    public static native long mapCount(long map);
+    public static native long mapAdd(long map, int key, long value);
+    public static native long mapUpdate(long map1, long map2);
+    public static native long mapRemove(long map, int key);
+    public static native long mapRemoveAll(long map, long variables);
+
+    /**
+     * Perform functional composition, also variable renaming.
+     * 
+     * If a node n of variable x is in the BDD where x is in the mapping, then replace
+     * that node with the result of IF mapping[v] THEN n.then ELSE n.else
+     */
+    public static native long compose(long bdd, long map);
 
     /* Private stuff */
 
