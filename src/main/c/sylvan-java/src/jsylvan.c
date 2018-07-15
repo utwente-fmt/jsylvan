@@ -82,6 +82,48 @@ Java_jsylvan_JSylvan_makeNext(JNIEnv *env, jclass cl, jlong a, jlong b, jlong va
 }
 
 JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makePrev(JNIEnv *env, jclass cl, jlong a, jlong b, jlong variables)
+{
+    LACE_ME;
+    return sylvan_relprev(a, b, variables);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeClosure(JNIEnv *env, jclass cl, jlong a)
+{
+    LACE_ME;
+    return sylvan_closure(a);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeForall(JNIEnv *env, jclass cl, jlong a, jlong b)
+{
+    LACE_ME;
+    return sylvan_forall(a, b);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeAndExists(JNIEnv *env, jclass cl, jlong a, jlong b, jlong variables)
+{
+    LACE_ME;
+    return sylvan_and_exists(a, b, variables);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeProject(JNIEnv *env, jclass cl, jlong a, jlong b)
+{
+    LACE_ME;
+    return sylvan_project(a, b);
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_JSylvan_makeAndProject(JNIEnv *env, jclass cl, jlong a, jlong b, jlong variables)
+{
+    LACE_ME;
+    return sylvan_and_project(a, b, variables);
+}
+
+JNIEXPORT jlong JNICALL
 Java_jsylvan_JSylvan_makeConstrain(JNIEnv *env, jclass cl, jlong a, jlong b)
 {
     LACE_ME;
@@ -146,7 +188,7 @@ Java_jsylvan_JSylvan_deref(JNIEnv *env, jclass cl, jlong bdd)
 }
 
 JNIEXPORT jlong JNICALL
-Java_jsylvan_JSylvan_count_refs(JNIEnv *env, jclass cl)
+Java_jsylvan_JSylvan_countRefs(JNIEnv *env, jclass cl)
 {
     return sylvan_count_refs();
     (void)env;
@@ -175,11 +217,48 @@ Java_jsylvan_JSylvan_initLace(JNIEnv *env, jclass cl, jlong threads, jlong stack
 }
 
 JNIEXPORT void JNICALL
-Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jlong tablesize, jlong cachesize, jint granularity)
+Java_jsylvan_JSylvan_initPackage(JNIEnv *env, jclass cl)
 {
-    sylvan_set_sizes(tablesize, tablesize, cachesize, cachesize);
-    sylvan_set_granularity(granularity);
     sylvan_init_package();
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_quit(JNIEnv *env, jclass cl)
+{
+    sylvan_quit();
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_setLimits(JNIEnv *env, jclass cl, jlong memory_cap, jint table_ratio, jint initial_ratio)
+{
+    sylvan_set_limits(memory_cap, table_ratio, initial_ratio);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_setSizes(JNIEnv *env, jclass cl, jlong min_tablesize, jlong max_tablesize, jlong min_cachesize, jlong max_cachesize)
+{
+    sylvan_set_sizes(min_tablesize, max_tablesize, min_cachesize, max_cachesize);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_setGranularity(JNIEnv *env, jclass cl, jint granularity)
+{
+    sylvan_set_granularity(granularity);
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_initMtbdd(JNIEnv *env, jclass cl)
+{
     sylvan_init_mtbdd();
 
     // the JSylvan java class has static vars one and zero
@@ -187,6 +266,37 @@ Java_jsylvan_JSylvan_initSylvan(JNIEnv *env, jclass cl, jlong tablesize, jlong c
     jfieldID zero_field = (*env)->GetStaticFieldID(env, cl, "zero", "J");
     (*env)->SetStaticLongField(env, cl, one_field, sylvan_true);
     (*env)->SetStaticLongField(env, cl, zero_field, sylvan_false);
+}
+
+JNIEXPORT void JNICALL
+Java_jsylvan_JSylvan_gc(JNIEnv *env, jclass cl)
+{
+    LACE_ME;
+    sylvan_gc();
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_Jsylvan_getTableUsed(JNIEnv *env, jclass cl)
+{
+    LACE_ME;
+    size_t res;
+    sylvan_table_usage(&res, NULL);
+    return (long)res;
+    (void)env;
+    (void)cl;
+}
+
+JNIEXPORT jlong JNICALL
+Java_jsylvan_Jsylvan_getTableSize(JNIEnv *env, jclass cl)
+{
+    LACE_ME;
+    size_t res;
+    sylvan_table_usage(NULL, &res);
+    return (long)res;
+    (void)env;
+    (void)cl;
 }
 
 JNIEXPORT void JNICALL

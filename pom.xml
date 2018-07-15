@@ -41,7 +41,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <sylvan.git.remote>https://github.com/trolando/sylvan.git</sylvan.git.remote>
     </properties>
 
     <build>

@@ -23,12 +23,13 @@ public class JSylvanDemo
     public static void main(String[] args)
     {
         // to use JSylvan, initialize it...
-        // 4 workers (for a 4 core machine, obviously set this to the number of cores)
-        // a work-stealing stack for each worker of <default> entries
-        // allocate a node table of 2^26 buckets (sorry, we did not implement resize)
-        // allocate a operations cache of 2^24 entries
+        // 2 workers (for a 2 core machine)
+        // use at most 400 MB for the two tables
+        // nodes table 2x as big as operation cache
+        // initial tables 16x as small as max
+        // granularity 1
         try {
-            JSylvan.initialize(4, 0, 26, 24, 1);
+            JSylvan.init(2, 400L*1024*1024, 1, 4, 1);
             System.out.println("Initialized Lace and Sylvan.");
         } catch (IOException ex) {
             ex.printStackTrace();

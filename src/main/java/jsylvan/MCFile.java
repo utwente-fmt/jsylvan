@@ -69,7 +69,12 @@ class MCFile
         try {
             int w = 4;
             if (args.length == 2) w = Integer.parseInt(args[1]);
-            JSylvan.initialize(w, 0, 26, 25, 1);
+            // to use JSylvan, initialize it...
+            // use at most 400 MB for the two tables
+            // nodes table 2x as big as operation cache
+            // initial tables 16x as small as max
+            // granularity 1
+            JSylvan.init(w, 400L*1024*1024, 1, 4, 1);
         } catch (IOException ex) {
             ex.printStackTrace();
             return;
